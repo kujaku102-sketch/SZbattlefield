@@ -5,14 +5,14 @@ import { playGame } from './play.mjs';
 process.on('message', async (message) => {
   if (message.type === 'exit') process.exit(0);
   if (message.type !== 'job') return;
-  const { job, gameDir, limits } = message;
+  const { job, gameDir, limits, record } = message;
   // One CPU object per game and seat: a CPU may keep state between its own moves, never between games.
   const cpus = {
     'seat-a': (await loadCpu(job.cpus['seat-a'])).create(gameDir),
     'seat-b': (await loadCpu(job.cpus['seat-b'])).create(gameDir)
   };
   for (const seat of Object.keys(cpus)) cpus[seat] = await cpus[seat];
-  const result = await playGame({ gameDir, job, cpus, limits });
+  const result = await playGame({ gameDir, job, cpus, limits, record: record ? { ...record, tag: String(process.pid) } : null });
   process.send({ type: 'result', result });
 });
 process.on('disconnect', () => process.exit(0));

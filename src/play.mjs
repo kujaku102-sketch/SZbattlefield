@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { loadSimHost } from './sim-host.mjs';
 import { loadCpu } from '../cpus/index.mjs';
+import { appendOreBlock, matchLine, recordDecision } from './ore.mjs';
 
 const SEATS = ['seat-a', 'seat-b'];
 const OPENING = new Set(['keepOpeningHand', 'openingMulligan']);
@@ -36,10 +37,12 @@ export async function startDeckIds(gameDir) { return (await loadGame(gameDir)).d
 // job: { id, cpus: { 'seat-a': name, 'seat-b': name }, deckA, deckB (start deck ids), seed }
 //   seat-a plays deckA, seat-b plays deckB. Who moves first is decided by the game's own opening dice (the seed).
 // cpus: { 'seat-a': <created cpu>, 'seat-b': <created cpu> }
-export async function playGame({ gameDir, job, cpus, limits }) {
+// record: { dir, tag, header, check } to write what the CPUs with a sim decided (src/ore.mjs); null for no record
+export async function playGame({ gameDir, job, cpus, limits, record: oreOut = null }) {
   const g = await loadGame(gameDir);
   const matchId = `bench:${job.id}`;
   const anomalies = [];
+  const oreLines = oreOut ? [] : null;
   const note = (type, detail) => { if (anomalies.length < 20) anomalies.push({ type, ...detail }); };
   const started = process.hrtime.bigint();
   const result = {
@@ -95,8 +98,9 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       const queryAction = (input) => { const t = process.hrtime.bigint(); const r = port.queryAction(input); planning += ms(t); return r; };
       const t0 = process.hrtime.bigint();
       let intent;
+      let view = null;
       try {
-        const view = { query, queryAction, commandId, seatId: actor };
+        view = { query, queryAction, commandId, seatId: actor };
         if (cpus[actor].needsSim === true) {
           view.baseline = () => baseline.choose({ query, queryAction, commandId, seatId: actor });
           if (query.requiredInput === null) view.sim = host.open({ authority, seat: actor });
@@ -111,6 +115,10 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       if (!intent?.ok) {
         note('cpu_no_move', { seat: actor, revision: status.revision, code: intent?.error?.code ?? null });
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; } continue;
+      }
+      if (oreLines && view.sim) {
+        const line = recordDecision({ sim: view.sim, cpu: cpus[actor], intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, check: oreOut.check, note, timing: (n, t) => { (result.featureMs ??= []).push([n, Math.round(t * 1000) / 1000]); } });
+        if (line) oreLines.push(line);
       }
       result.choose.push(round(chooseMs)); result.planning.push(round(planning)); result.queryMs.push(round(queryMs));
       const ts = process.hrtime.bigint();
@@ -165,5 +173,6 @@ export async function playGame({ gameDir, job, cpus, limits }) {
     result.status = 'error';
   }
   result.wallMs = Math.round(ms(started));
+  if (oreOut && oreLines) appendOreBlock(oreOut.dir, oreOut.tag, oreOut.header, [...oreLines, matchLine(result, oreLines)]);
   return result;
 }

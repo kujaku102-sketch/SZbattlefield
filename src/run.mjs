@@ -28,6 +28,7 @@
 // Resuming: run the same command again. Matches already in <out>/raw.jsonl are skipped. The environment (node version, game commit,
 // CPU versions, bench code, limits: env.json) must be the same as the one the first lines were made in; if not, nothing is played.
 // Several shards are put together afterwards with merge.mjs.
+import { oreHeader } from './ore.mjs';
 import { fork } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -59,6 +60,11 @@ const allDecks = await startDeckIds(gameDir);
 const decks = args.decks && args.decks !== 'all' ? String(args.decks).split(',') : allDecks;
 const swap = Boolean(args.swap);
 const env = await describeEnv({ gameDir, cpuSpecs: [cpuA, cpuB], limits });
+
+// --record <dir>: the decisions of the CPUs that look ahead are written down (src/ore.mjs); --check-features also makes sure no feature depends on what the seat cannot see
+const recordOut = typeof args.record === 'string'
+  ? { dir: path.resolve(args.record), check: Boolean(args['check-features']), header: oreHeader({ game: { commit: env.key.game.commit, variant: env.info.game?.variant ?? null }, cpus: { a: cpuA, b: cpuB }, envId: env.id }) }
+  : null;
 
 // The table. A job id is a stable name: it is also the match id the game sees.
 const table = buildJobs({ cpuA, cpuB, swap, decks, seeds });
@@ -121,7 +127,7 @@ await new Promise((resolve) => {
     const next = () => {
       current = queue.shift() ?? null;
       if (!current) { leaving = true; child.send({ type: 'exit' }); return; }
-      child.send({ type: 'job', job: current, gameDir, limits });
+      child.send({ type: 'job', job: current, gameDir, limits, record: recordOut });
     };
     child.on('message', (message) => {
       if (message.type === 'ready') return next();

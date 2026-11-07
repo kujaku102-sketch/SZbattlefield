@@ -36,9 +36,14 @@ export default {
     const noEffect = new Set();      // keys of moves that were accepted and changed nothing this turn
     // how often each kind of decision was made (the harness writes these into the match result)
     const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0 };
+    // what the last decision was, for a recorder that learns from this CPU (the harness reads it; nothing here depends on it):
+    // { kind: 'own' | 'baseline', why, moveId (own), gains: [{ id, value }] (the average gain of every move it tried, when it tried) }
+    let lastDecision = null;
+    let gainsOut = null;
     const hand = (key, query, result) => { pending = { key, looks: looks(query) }; return result; };
     const fallback = (view, why) => {
       counters.baseline += 1; counters.baselineWhy[why] = (counters.baselineWhy[why] ?? 0) + 1;
+      lastDecision = { kind: 'baseline', why, moveId: null, gains: gainsOut };
       const result = view.baseline();
       if (!result?.ok) return result;
       const key = `base:${JSON.stringify(result.value.action)}`;
@@ -55,8 +60,10 @@ export default {
     return {
       needsSim: true,
       counters,
+      get lastDecision() { return lastDecision; },
       choose(view) {
         const { sim, query } = view;
+        lastDecision = null; gainsOut = null;
         const revision = query.status?.revision;
         const now = query.observation?.turnNumber ?? null;
         if (now !== turn) { turn = now; noEffect.clear(); pending = null; }
@@ -82,6 +89,7 @@ export default {
           complete += 1;
           sampleMs = sim.elapsedMs() - started;
         }
+        gainsOut = candidates.filter((move) => gain.get(move.id).n === complete).map((move) => ({ id: move.id, value: gain.get(move.id).sum / gain.get(move.id).n }));
         let best = null;
         for (const move of candidates) {
           const g = gain.get(move.id);
@@ -90,6 +98,7 @@ export default {
         if (best === null || best.value <= margin) return fallback(view, 'no-gain');
         counters.own += 1;
         last = { revision, id: best.id };
+        lastDecision = { kind: 'own', why: 'own', moveId: best.id, gains: gainsOut };
         return hand(`own:${best.move.type}:${[...best.move.uids].sort().join(',')}`, query,
           { ok: true, value: sim.intent(best.id, { commandId: view.commandId, expectedRevision: revision }) });
       }

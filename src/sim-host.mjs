@@ -2,7 +2,7 @@
 // opens a `decision` and gives the CPU only that:
 //
 //   decision.me          'player' | 'ai': the seat's side in the engine states below
-//   decision.moves       the seat's moves: [{ id, type, uids }]  (src/moves.mjs; the real engine calls and actions stay on this side)
+//   decision.moves       the seat's moves: [{ id, type, uids, zone, targetKind }]  (src/moves.mjs; the real engine calls and actions stay on this side)
 //   decision.unsupported the types of candidates that have no engine call yet (so nothing is silently dropped)
 //   decision.samples     how many determinized states there are
 //   decision.now(k)      determinized state k: what the seat cannot see is re-drawn (src/sim.mjs); read it, do not keep it
@@ -70,7 +70,8 @@ export async function loadSimHost(gameDir) {
 
     return {
       me,
-      moves: moves.map(({ id, type, uids }) => ({ id, type, uids })),
+      // zone (where a card goes) and targetKind (what an attack goes for) are public parts of the move; the action itself stays on this side
+      moves: moves.map(({ id, type, uids, action }) => ({ id, type, uids, zone: action.destination?.zone ?? null, targetKind: action.target?.kind ?? null })),
       unsupported,
       samples,
       now: (k) => sample(k),
