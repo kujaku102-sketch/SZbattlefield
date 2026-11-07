@@ -65,8 +65,9 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     if (!recorded.ok) { note('record_failed', { error: recorded.error }); return result; }
     const record = recorded.value;
     const needsSim = SEATS.some((seat) => cpus[seat].needsSim === true);
+    const needsBaseline = needsSim || SEATS.some((seat) => cpus[seat].needsBaseline === true);   // a CPU that falls back on the current CPU
     const host = needsSim ? await simHostFor(gameDir) : null;
-    const baseline = needsSim ? await (await loadCpu('simple')).create(gameDir) : null;
+    const baseline = needsBaseline ? await (await loadCpu('simple')).create(gameDir) : null;
     let idle = 0;
     const trace = limits.trace ? createTrace() : null;
     let commandNumber = 0;
@@ -101,10 +102,8 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       let view = null;
       try {
         view = { query, queryAction, commandId, seatId: actor };
-        if (cpus[actor].needsSim === true) {
-          view.baseline = () => baseline.choose({ query, queryAction, commandId, seatId: actor });
-          if (query.requiredInput === null) view.sim = host.open({ authority, seat: actor });
-        }
+        if (cpus[actor].needsSim === true || cpus[actor].needsBaseline === true) view.baseline = () => baseline.choose({ query, queryAction, commandId, seatId: actor });
+        if (cpus[actor].needsSim === true && query.requiredInput === null) view.sim = host.open({ authority, seat: actor });
         intent = cpus[actor].choose(view);
       }
       catch (error) {
@@ -116,9 +115,12 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
         note('cpu_no_move', { seat: actor, revision: status.revision, code: intent?.error?.code ?? null });
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; } continue;
       }
-      if (oreLines && view.sim) {
-        const line = recordDecision({ sim: view.sim, cpu: cpus[actor], intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, check: oreOut.check, note, timing: (n, t) => { (result.featureMs ??= []).push([n, Math.round(t * 1000) / 1000]); } });
-        if (line) oreLines.push(line);
+      if (oreLines && cpus[actor].needsSim === true) {
+        try {
+          const line = recordDecision({ query, queryAction: ports[actor].queryAction, sim: view.sim ?? null, cpu: cpus[actor], intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null },
+            timing: ({ planCalls, planMs, featureMs, candidates }) => { (result.featureTiming ??= []).push([candidates, Math.round(planMs * 1000) / 1000, Math.round(featureMs * 1000) / 1000, planCalls]); } });
+          if (line) oreLines.push(line);
+        } catch (error) { note('record_error', { rev: status.revision, message: String(error?.message ?? error), stack: String(error?.stack ?? '').split(String.fromCharCode(10)).slice(0, 3).join(' | ') }); }
       }
       result.choose.push(round(chooseMs)); result.planning.push(round(planning)); result.queryMs.push(round(queryMs));
       const ts = process.hrtime.bigint();

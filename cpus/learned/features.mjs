@@ -1,22 +1,21 @@
 // Features of a decision, for the CPUs that learn from a teacher (forgehammer) and for the recorder that gathers the teacher's decisions.
-// ONE place: the recorder (harness side) and the learned CPU (cpus/forged-*.mjs) both call these functions, so what is learned and what is
-// run cannot drift apart. FEATURE_VERSION and the name lists go into every record header and every generated CPU.
+// ONE place: the recorder (harness side) and the learned CPU both call these functions, so what is learned and what is run cannot drift apart.
+// FEATURE_VERSION and the name lists go into every record header and every generated CPU.
 //
-// What a seat may see (the rule of this file): everything of its own side except the order of its deck; of the other side only what is face
-// up, and the plain numbers (strength, memory, counts of hand / deck / registry / trash). `seatView()` is the ONLY place that reads an engine
-// state, and it copies out just that; everything below reads the copy. The opponent's hand and deck contents, and face-down cards of the
-// opponent, are never read. A card is described by its properties (cost, ATK, STR, category, keywords, whether it has text), never by its
-// name or number.
+// The only input is the seat's own query (its observation and its legal actions): what that seat's screen would show, read as data, no screen
+// involved. There is no way in here for an engine state, a re-drawn (determinized) state, or anything of the other side's hand or deck: the opponent's hand
+// and deck are counts in the observation, its face-down cards are counts too. A card is described by its properties (cost, ATK, STR, category, keywords,
+// whether it has text, layers, sleep ...), never by its name or number. What the seat's own face-down cards are is known to it and may be used.
 //
-// state features   stateFeatures(view)                  -> Float64Array(STATE_NAMES.length)   (what a value model reads)
-// candidate        candidateFeatures(ctx, move)         -> Float64Array(CAND_NAMES.length)    (φ(s,a): the move, and the state where it matters)
-// decision         decisionFeatures(state, me, moves, unsupported) -> { state, cands: Float64Array[] }
-//                  when the decision has kinds of action with no move in the list (`unsupported`), one more candidate stands for "let the game's
-//                  own CPU decide" (index moves.length); a CPU that picks it returns view.baseline()
-export const FEATURE_VERSION = 1;
+//   queryView(query)                       -> the view every function below reads (a copy of just the fields used)
+//   stateFeatures(view)                    -> Float64Array(STATE_NAMES.length)
+//   candidateFeatures(ctx, candidate)      -> Float64Array(CAND_NAMES.length)         (φ(s,a): the move, and the state where it matters)
+//   decisionFeatures(query, candidates)    -> { state, cands: Float64Array[] }         (candidates: cpus/learned/candidates.mjs)
+export const FEATURE_VERSION = 2;
 
 const KW = ['QA', 'SECURITY', 'CONTACT', 'HACKING', 'ENCRYPTION', 'PROTECT', 'BACKUP', 'LOGIN', 'LOGOUT', 'RESIDENT', 'UPDATE', 'RESPONSE', 'PROXY', 'DECOY'];
-const TYPES = ['install', 'recoverRegistry', 'activateScript', 'activateAbility', 'endTurn', 'attack', 'executeCard', 'setScript', 'redeploy'];
+const TYPES = ['install', 'recoverRegistry', 'activateScript', 'activateAbility', 'endTurn', 'attack', 'executeCard', 'setScript', 'redeploy', 'executeSpell', 'activateCardEffect', 'other'];
+const PLACING = new Set(['executeCard', 'setScript', 'redeploy', 'install']);
 
 export const STATE_NAMES = Object.freeze([
   'turn', 'first', 'my_str', 'opp_str', 'str_diff', 'my_mem', 'my_mem_frac', 'my_cap', 'opp_mem', 'opp_cap',
@@ -28,48 +27,59 @@ export const STATE_NAMES = Object.freeze([
 export const CAND_NAMES = Object.freeze([
   ...TYPES.map((t) => `type_${t}`),
   'cost', 'afford', 'cost_frac', 'mem_left', 'atk', 'hp', 'atk_hp', 'is_ob', 'is_sp', 'is_code', 'is_script', 'has_text',
-  ...KW.map((k) => `kw_${k}`), 'layers', 'dest_front', 'dest_back', 'front_free',
-  'atk_user', 'atk_ob', 'a_atk', 'a_hp', 't_atk', 't_hp', 'kills', 'dies', 'dmg_frac', 'lethal', 'crosses',
+  ...KW.map((k) => `kw_${k}`), 'layers', 'dest_front', 'dest_back', 'dest_host', 'front_free',
+  'atk_user', 'atk_ob', 'a_atk', 'a_hp', 't_atk', 't_hp', 'kills', 'dies', 'dmg_frac', 'lethal', 'crosses', 'tgt_own', 'tgt_foe',
   'end_x_memleft', 'end_x_ready', 'end_x_playable', 'atk_x_strdiff', 'atk_x_oppasleep', 'place_x_boarddiff', 'place_x_hand',
   'cost_rank', 'n_cands', 'max_afford_cost',
-  // the move that is not a move of this list: what the game's own CPU does with the kinds of action the list has no move for (spells, card effects, ...)
+  // the candidate that is no move of this list: what the game's own CPU does with the kinds of action the list has no candidate for
   'type_baseline', 'unsupported_n', 'base_x_memory', 'base_x_hand'
 ]);
 const IDX = Object.freeze(Object.fromEntries(CAND_NAMES.map((name, i) => [name, i])));
 
 const num = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
-const atkOf = (card) => num(card.atk) + num(card.tempAtk) + num(card.permanentAtk);
-const hpOf = (card) => Math.max(0, num(card.str) + num(card.tempStr) + num(card.permanentStr) - num(card.damage));
 
-// What is copied out of a card: its properties, not its name or number.
+// What is copied out of a card of the observation: its properties, not its name or number.
 function cardView(card) {
-  const keywords = new Set();
-  for (const keyword of card.compiled?.keywords ?? []) if (keyword.intrinsic !== false) keywords.add(keyword.name);
-  for (const name of card.grantedKeywords ?? []) keywords.add(name);
+  const computed = card.computed ?? {};
+  const definition = card.definition ?? {};
+  const status = card.status ?? {};
+  const text = definition.text ?? '';
   return {
-    uid: card.uid, category: card.category, cost: num(card.cost), atk: atkOf(card), hp: hpOf(card), hasText: Boolean(card.text && String(card.text).length > 0),
-    asleep: Boolean(card.sleep), sick: Boolean(card.summoningSick), faceDown: Boolean(card.faceDown), keywords, layers: (card.mounted ?? []).length
+    ref: card.cardRef, category: definition.category ?? null,
+    cost: num(computed.currentCost ?? definition.cost), atk: num(computed.currentAtk ?? definition.atk), hp: Math.max(0, num(computed.currentStr ?? definition.str)),
+    hasText: text.length > 0 && text !== '(効果なし)', asleep: Boolean(status.sleep), sick: Boolean(status.summoningSick), faceDown: Boolean(card.faceDown),
+    keywords: new Set((computed.badges ?? []).map((badge) => badge.name)), layers: (card.mounted ?? []).length
   };
 }
 
-// The seat's view of an engine state. The only reader of the state.
-export function seatView(state, me) {
-  const opp = me === 'player' ? 'ai' : 'player';
-  const P = state.players[me]; const O = state.players[opp];
-  const crossed = (player) => (player.incidentsTriggered ?? []).length;
-  const upCards = (cards) => cards.filter((card) => !card.faceDown).map(cardView);
+// The seat's view of its query: the only reader of the observation.
+export function queryView(query) {
+  const o = query.observation;
+  const me = o.seats.find((seat) => seat.seatId === o.viewerSeat);
+  const opp = o.seats.find((seat) => seat.seatId !== o.viewerSeat);
+  const cards = (zone) => (zone?.cards ?? []).map(cardView);
+  const mine = { hand: cards(me.hand), front: cards(me.front), back: cards(me.back), registry: cards(me.registry) };
+  const theirs = { front: cards(opp.front).filter((card) => !card.faceDown), back: cards(opp.back).filter((card) => !card.faceDown) };
+  const byRef = new Map();
+  for (const card of [...mine.hand, ...mine.front, ...mine.back, ...mine.registry, ...theirs.front, ...theirs.back]) byRef.set(card.ref, card);
+  const ownRefs = new Set([...mine.hand, ...mine.front, ...mine.back, ...mine.registry].map((card) => card.ref));
+  // The seat's own turn: turn 1 is the first player's, turns alternate (the rule on the first-turn draw does not change that).
+  const myTurn = o.activeSeat === o.viewerSeat;
+  // Before the first turn (the opening: keeping the hand or drawing again) who goes first is not decided yet: 0.5.
+  const opening = (query.legalActions ?? []).some((entry) => entry.kind === 'fixed' && ['keepOpeningHand', 'openingMulligan'].includes(entry.action?.type)) || (query.legalActions ?? []).some((entry) => entry.actionType === 'openingMulligan');
+  const first = opening ? 0.5 : (num(o.turnNumber) % 2 === 1) === myTurn ? 1 : 0;
   return {
-    turn: num(state.turnNumber), first: state.firstPlayer === me,
+    turn: num(o.turnNumber), first, viewer: o.viewerSeat, byRef, ownRefs,
     me: {
-      str: num(P.fortressStr), memory: num(P.memory), cap: num(P.baseMemory) + num(P.permanentMemory),
-      hand: P.hand.map(cardView), front: P.front.map(cardView), back: P.back.map(cardView), registry: P.registry.map(cardView),
-      deckN: P.deck.length, trashN: P.trash.length, crossed: crossed(P), thresholds: [...(P.user?.incidents ?? [])], triggered: [...(P.incidentsTriggered ?? [])],
-      frontLimit: num(P.user?.frontLimit), backLimit: num(P.user?.backLimit)
+      str: num(me.fortressStr), memory: num(me.memory?.current), cap: num(me.memory?.max), ...mine,
+      handN: me.hand?.count ?? mine.hand.length, deckN: num(me.deck?.count), registryN: num(me.registry?.count), trashN: num(me.trash?.count),
+      crossed: (me.incidents ?? []).length, thresholds: [...(me.user?.incidents ?? [])], triggered: [...(me.incidents ?? [])], frontLimit: num(me.user?.frontLimit), backLimit: num(me.user?.backLimit)
     },
     opp: {
-      str: num(O.fortressStr), memory: num(O.memory), cap: num(O.baseMemory) + num(O.permanentMemory),
-      handN: O.hand.length, deckN: O.deck.length, trashN: O.trash.length, registryUpN: O.registry.filter((card) => !card.faceDown).length,
-      front: upCards(O.front), back: upCards(O.back), crossed: crossed(O), thresholds: [...(O.user?.incidents ?? [])], triggered: [...(O.incidentsTriggered ?? [])]
+      str: num(opp.fortressStr), memory: num(opp.memory?.current), cap: num(opp.memory?.max), ...theirs,
+      handN: num(opp.hand?.count), deckN: num(opp.deck?.count), trashN: num(opp.trash?.count),
+      registryUpN: (opp.registry?.cards ?? []).filter((card) => !card.faceDown).length,
+      crossed: (opp.incidents ?? []).length, thresholds: [...(opp.user?.incidents ?? [])], triggered: [...(opp.incidents ?? [])]
     }
   };
 }
@@ -87,27 +97,25 @@ function board(cards) {
 export function stateFeatures(view) {
   const a = board(view.me.front); const b = board(view.opp.front);
   return Float64Array.from([
-    view.turn / 20, view.first ? 1 : 0, view.me.str / 20, view.opp.str / 20, (view.me.str - view.opp.str) / 20,
+    view.turn / 20, view.first, view.me.str / 20, view.opp.str / 20, (view.me.str - view.opp.str) / 20,
     view.me.memory / 10, view.me.memory / Math.max(1, view.me.cap), view.me.cap / 10, view.opp.memory / 10, view.opp.cap / 10,
-    view.me.hand.length / 10, view.me.deckN / 30, view.me.registry.length / 10, view.me.back.length / 5, view.me.trashN / 20,
+    view.me.handN / 10, view.me.deckN / 30, view.me.registryN / 10, view.me.back.length / 5, view.me.trashN / 20,
     view.opp.handN / 10, view.opp.deckN / 30, view.opp.registryUpN / 10, view.opp.trashN / 20,
     a.obs / 5, a.asleep / 5, a.ready / 5, a.atk / 20, a.hp / 20, b.obs / 5, b.asleep / 5, b.atk / 20, b.hp / 20,
     view.me.crossed / 4, view.opp.crossed / 4
   ]);
 }
 
-// A context for the moves of one decision: the seat's view and what is looked up for every move.
-export function decisionContext(view, moves) {
-  const byUid = new Map();
-  for (const card of [...view.me.hand, ...view.me.front, ...view.me.back, ...view.me.registry, ...view.opp.front, ...view.opp.back]) byUid.set(card.uid, card);
-  const acting = (move) => (move.uids.length > 0 ? byUid.get(move.uids[0]) ?? null : null);
+// candidates: [{ kind: 'move' | 'baseline', type, cardRef?, targetRef?, targetUser?, zone?, host? , sig }]  (cpus/learned/candidates.mjs)
+export function decisionContext(view, candidates, unsupported) {
+  const moves = candidates.filter((c) => c.kind === 'move');
   const mine = board(view.me.front); const theirs = board(view.opp.front);
-  const nonEnd = moves.filter((move) => move.type !== 'endTurn').length;
-  // the cost rank of each move that plays a card, among the moves that play a card
-  const costs = moves.filter((move) => ['executeCard', 'setScript', 'redeploy', 'install'].includes(move.type)).map((move) => acting(move)?.cost ?? 0);
+  const acting = (c) => (c.cardRef ? view.byRef.get(c.cardRef) ?? null : null);
+  const costs = moves.filter((c) => PLACING.has(c.type)).map((c) => acting(c)?.cost ?? 0);
   const sorted = [...costs].sort((x, y) => x - y);
-  const maxAfford = Math.max(0, ...moves.filter((move) => move.type !== 'attack' && move.type !== 'endTurn').map((move) => acting(move)?.cost ?? 0).filter((cost) => cost <= view.me.memory));
-  return { view, moves, byUid, acting, mine, theirs, nonEnd, sorted, maxAfford };
+  const nonEnd = moves.filter((c) => c.type !== 'endTurn').length;
+  const maxAfford = Math.max(0, ...moves.filter((c) => c.type !== 'attack' && c.type !== 'endTurn').map((c) => acting(c)?.cost ?? 0).filter((cost) => cost <= view.me.memory));
+  return { view, moves, unsupported, mine, theirs, nonEnd, sorted, maxAfford, acting, count: moves.length };
 }
 
 function crossings(player, strAfter) {
@@ -116,13 +124,13 @@ function crossings(player, strAfter) {
   return n;
 }
 
-export function candidateFeatures(ctx, move) {
+export function candidateFeatures(ctx, c) {
   const { view } = ctx; const f = new Float64Array(CAND_NAMES.length);
   const set = (name, value) => { f[IDX[name]] = value; };
-  const typeIndex = TYPES.indexOf(move.type);
-  if (typeIndex >= 0) f[typeIndex] = 1;
+  const typeName = TYPES.includes(c.type) ? c.type : 'other';
+  f[IDX[`type_${typeName}`]] = 1;
   const memory = view.me.memory;
-  const card = ctx.acting(move);
+  const card = ctx.acting(c);
   if (card) {
     set('cost', card.cost / 10);
     set('afford', card.cost <= memory ? 1 : 0);
@@ -135,19 +143,18 @@ export function candidateFeatures(ctx, move) {
     KW.forEach((name) => { if (card.keywords.has(name)) set(`kw_${name}`, 1); });
     set('layers', card.layers / 3);
   }
-  if (move.zone === 'front') set('dest_front', 1);
-  if (move.zone === 'back') set('dest_back', 1);
+  if (c.zone === 'front') set('dest_front', 1);
+  if (c.zone === 'back') set('dest_back', 1);
+  if (c.host) set('dest_host', 1);
   set('front_free', Math.max(0, view.me.frontLimit - view.me.front.length) / 5);
-  const place = ['executeCard', 'setScript', 'redeploy', 'install'].includes(move.type);
-  if (move.type === 'attack' && card) {
-    const toUser = move.targetKind ? move.targetKind === 'user' : move.uids.length < 2;
-    const target = toUser ? null : ctx.byUid.get(move.uids[1]) ?? null;
-    set('atk_user', toUser ? 1 : 0); set('atk_ob', toUser ? 0 : 1);
+  const target = c.targetRef ? view.byRef.get(c.targetRef) ?? null : null;
+  if (c.type === 'attack' && card) {
+    set('atk_user', c.targetUser ? 1 : 0); set('atk_ob', c.targetUser ? 0 : 1);
     set('a_atk', card.atk / 10); set('a_hp', card.hp / 10);
     if (target) {
       set('t_atk', target.atk / 10); set('t_hp', target.hp / 10);
       set('kills', card.atk >= target.hp ? 1 : 0); set('dies', target.atk >= card.hp ? 1 : 0);
-    } else if (toUser) {
+    } else if (c.targetUser) {
       const after = view.opp.str - card.atk;
       set('dmg_frac', Math.min(1, card.atk / Math.max(1, view.opp.str)));
       set('lethal', after <= 0 ? 1 : 0);
@@ -155,35 +162,40 @@ export function candidateFeatures(ctx, move) {
     }
     set('atk_x_strdiff', (view.me.str - view.opp.str) / 20);
     set('atk_x_oppasleep', ctx.theirs.asleep / 5);
+  } else if (target) {
+    // a move with a target that is not an attack (a spell, a card effect)
+    set('t_atk', target.atk / 10); set('t_hp', target.hp / 10);
+    set(view.ownRefs.has(target.ref) ? 'tgt_own' : 'tgt_foe', 1);
   }
-  if (move.type === 'endTurn') {
+  if (c.type === 'endTurn') {
     set('end_x_memleft', memory / 10); set('end_x_ready', ctx.mine.ready / 5); set('end_x_playable', ctx.nonEnd / 20);
   }
-  if (place) {
-    set('place_x_boarddiff', (ctx.mine.obs - ctx.theirs.obs) / 5); set('place_x_hand', view.me.hand.length / 10);
+  if (PLACING.has(c.type)) {
+    set('place_x_boarddiff', (ctx.mine.obs - ctx.theirs.obs) / 5); set('place_x_hand', view.me.handN / 10);
     const rank = ctx.sorted.length > 1 ? ctx.sorted.filter((cost) => cost < (card?.cost ?? 0)).length / (ctx.sorted.length - 1) : 0;
     set('cost_rank', rank);
     set('max_afford_cost', card && card.cost === ctx.maxAfford && card.cost <= memory ? 1 : 0);
   }
-  set('n_cands', ctx.moves.length / 40);
+  set('n_cands', ctx.count / 40);
   return f;
 }
 
-// state: an engine state (a determinized one, from the sim); me: 'player' | 'ai'; moves: [{ id, type, uids, zone?, targetKind? }]
-export function decisionFeatures(state, me, moves, unsupported = []) {
-  const view = seatView(state, me);
-  const ctx = decisionContext(view, moves);
-  const cands = moves.map((move) => candidateFeatures(ctx, move));
-  if (unsupported.length > 0) cands.push(baselineCandidate(ctx, unsupported));
-  return { state: stateFeatures(view), cands };
-}
-
-export function baselineCandidate(ctx, unsupported) {
+export function baselineCandidate(ctx) {
   const f = new Float64Array(CAND_NAMES.length);
   f[IDX.type_baseline] = 1;
-  f[IDX.unsupported_n] = Math.min(1, unsupported.length / 5);
+  f[IDX.unsupported_n] = Math.min(1, ctx.unsupported.length / 5);
   f[IDX.base_x_memory] = ctx.view.me.memory / 10;
-  f[IDX.base_x_hand] = ctx.view.me.hand.length / 10;
-  f[IDX.n_cands] = ctx.moves.length / 40;
+  f[IDX.base_x_hand] = ctx.view.me.handN / 10;
+  f[IDX.n_cands] = ctx.count / 40;
   return f;
+}
+
+// candidates: the result of buildCandidates(query, queryAction): { cands: [...move candidates], unsupported: [types] }.
+// The vectors come in the order of `cands`; one more, at the end, stands for "let the game's own CPU decide" when there are kinds of action with no candidate.
+export function decisionFeatures(query, { cands, unsupported }) {
+  const view = queryView(query);
+  const ctx = decisionContext(view, cands, unsupported);
+  const vectors = cands.map((c) => candidateFeatures(ctx, c));
+  if (unsupported.length > 0) vectors.push(baselineCandidate(ctx));
+  return { state: stateFeatures(view), cands: vectors };
 }

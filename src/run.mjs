@@ -61,19 +61,22 @@ const decks = args.decks && args.decks !== 'all' ? String(args.decks).split(',')
 const swap = Boolean(args.swap);
 const env = await describeEnv({ gameDir, cpuSpecs: [cpuA, cpuB], limits });
 
-// --record <dir>: the decisions of the CPUs that look ahead are written down (src/ore.mjs); --check-features also makes sure no feature depends on what the seat cannot see
+// --record <dir>: the decisions of the CPUs that look ahead are written down (src/ore.mjs)
 // The rules the records were made under go into the header: the game's rule and card versions, its commit and variant, and the first-turn draw read from its source
 // (so that a record made under another first-turn draw is told apart from this one).
 function gameRules(dir) {
   const read = (file) => { try { return readFileSync(path.join(dir, file), 'utf8'); } catch { return ''; } };
   const versions = read('src/game/runtime/versions.js');
   const turn = read('src/game/core/turn.js');
-  const firstTurnDraw = /playerId === state\.firstPlayer\) drawCount = 0/.test(turn) ? { first: 0, second: 2 }
-    : /playerId !== state\.firstPlayer\) drawCount = 2/.test(turn) ? { first: 1, second: 2 } : null;
+  // the first-turn draw, read from the lines of turn.js that set it: `... === state.firstPlayer) drawCount = N;` for the first player (when the line is gone the first player draws the plain 1),
+  // `else if (player.turnsTaken === 0) drawCount = N;` (or `playerId !== state.firstPlayer`) for the second
+  const firstLine = /playerId === state\.firstPlayer\) drawCount = (\d)/.exec(turn);
+  const secondLine = /playerId !== state\.firstPlayer\) drawCount = (\d)|else if \(player\.turnsTaken === 0\) drawCount = (\d)/.exec(turn);
+  const firstTurnDraw = secondLine ? { first: firstLine ? Number(firstLine[1]) : 1, second: Number(secondLine[1] ?? secondLine[2]) } : null;
   return { ruleVersion: /RULE_VERSION = '([^']+)'/.exec(versions)?.[1] ?? null, cardVersion: /CARD_VERSION = '([^']+)'/.exec(versions)?.[1] ?? null, firstTurnDraw };
 }
 const recordOut = typeof args.record === 'string'
-  ? { dir: path.resolve(args.record), check: Boolean(args['check-features']), header: oreHeader({ game: { commit: env.key.game.commit, variant: env.info.game?.variant ?? null }, rules: gameRules(gameDir), cpus: { a: cpuA, b: cpuB }, envId: env.id }) }
+  ? { dir: path.resolve(args.record), header: oreHeader({ game: { commit: env.key.game.commit, variant: env.info.game?.variant ?? null }, rules: gameRules(gameDir), cpus: { a: cpuA, b: cpuB }, envId: env.id }) }
   : null;
 
 // The table. A job id is a stable name: it is also the match id the game sees.

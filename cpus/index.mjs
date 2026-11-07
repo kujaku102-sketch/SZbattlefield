@@ -43,7 +43,7 @@ export async function loadCpu(spec) {
   const module = await import(pathToFileURL(file).href);
   const cpu = module.default;
   if (!cpu || typeof cpu.create !== 'function' || typeof cpu.id !== 'string') throw new Error(`not a CPU module: ${file}`);
-  if (cpu.needsSim === true) sealedFiles(file);
+  if (cpu.needsSim === true || cpu.needsBaseline === true) sealedFiles(file);
   return { ...cpu, file, params, create: (gameDir) => cpu.create(gameDir, params) };
 }
 
@@ -52,7 +52,7 @@ export const fileHash = (file) => createHash('sha256').update(readFileSync(file,
 
 export async function cpuVersion(spec, gameDir) {
   const cpu = await loadCpu(spec);
-  const files = [...new Set([cpu.file, ...(cpu.needsSim === true ? sealedFiles(cpu.file) : []), ...(cpu.versionFiles ? cpu.versionFiles(gameDir) : [])])];
+  const files = [...new Set([cpu.file, ...(cpu.needsSim === true || cpu.needsBaseline === true ? sealedFiles(cpu.file) : []), ...(cpu.versionFiles ? cpu.versionFiles(gameDir) : [])])];
   const hash = createHash('sha256');
   for (const file of files) hash.update(`${path.basename(file)}:${fileHash(file)};`);
   return { spec, id: cpu.id, files: files.map((file) => ({ file: path.basename(file), hash: fileHash(file) })), hash: hash.digest('hex').slice(0, 16) };
