@@ -1,4 +1,5 @@
 // Plays one match between two CPUs through the same local runtime port the game's own AI match uses, and measures it.
+import { createTrace } from './trace.mjs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -64,6 +65,7 @@ export async function playGame({ gameDir, job, cpus, limits }) {
     const host = needsSim ? await simHostFor(gameDir) : null;
     const baseline = needsSim ? await (await loadCpu('simple')).create(gameDir) : null;
     let idle = 0;
+    const trace = limits.trace ? createTrace() : null;
     let commandNumber = 0;
     // The same command in the same state, again and again, is a loop (a command can be accepted and change nothing). `maxRepeat` such commands in a
     // row end the match as capped (cap "repeat"). "The state" is what the two seats see (both queries' observations, without the revision).
@@ -112,6 +114,7 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       }
       result.choose.push(round(chooseMs)); result.planning.push(round(planning)); result.queryMs.push(round(queryMs));
       const ts = process.hrtime.bigint();
+      trace?.before(authority.engineState);
       let submitted;
       try {
         const bound = g.contract.makeBoundCommand({ contractVersion: 1, matchId, seatId: actor, seatIds: [...SEATS], sessionGeneration: 1 }, intent.value);
@@ -123,6 +126,7 @@ export async function playGame({ gameDir, job, cpus, limits }) {
           const card = g.record.recordedCardDefinition(authority.engineState, encoded.value);
           record.commands.push({ seat: actor, action: encoded.value, ...(card ? { card } : {}) });
           authority = submitted.value.authority;
+          trace?.after(authority.engineState, SEATS.indexOf(actor));
         }
       }
       catch (error) {
@@ -154,6 +158,7 @@ export async function playGame({ gameDir, job, cpus, limits }) {
     if (finished) result.status = 'finished';
     const counters = Object.fromEntries(SEATS.filter((seat) => cpus[seat].counters).map((seat) => [seat, cpus[seat].counters]));
     if (Object.keys(counters).length > 0) result.cpuStats = counters;
+    if (trace) result.trace = trace.result(authority.engineState.firstPlayer === 'player' ? 0 : 1);
     if (limits.keepRecord) result.record = record;
   } catch (error) {
     note('game_exception', { message: String(error?.message ?? error), stack: String(error?.stack ?? '').split('\n').slice(0, 4).join(' | ') });

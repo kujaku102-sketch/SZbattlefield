@@ -19,6 +19,7 @@
 //   --commit <sha>  the game commit to test (GAME_COMMIT does the same). The game is fetched from GAME_SOURCE (default: the public Siege_Zeke_openbeta);
 //                   with neither commit nor GAME_DIR, the head of GAME_REF (default main). GAME_DIR=<path> uses a checkout as it is. See game-dir.mjs.
 //   --variant <id>  play on a copy of the game with the rule variant variants/<id>.json applied (src/variants.mjs); recorded in env.json
+//   --trace         write what each match does to the two users' STR and memory (src/trace.mjs) into every result
 //   --out <dir>     where raw.jsonl, config.json and env.json go (default: ./cpu-bench-out/<a>-<b>[/shard-i-of-n])
 //
 // The deck table is every ordered pair (deck of seat-a, deck of seat-b), same deck against itself included. Who moves first
@@ -49,7 +50,7 @@ const cpuB = args.b ?? 'simple';
 const shard = args.shard ? parseShard(args.shard) : null;
 const outDir = path.resolve(args.out ?? path.join('cpu-bench-out', `${cpuA.replace(/[^\w.-]+/g, '_')}-${cpuB.replace(/[^\w.-]+/g, '_')}`, ...(shard ? [`shard-${shard.index}-of-${shard.count}`] : [])));
 const workers = Number(args.workers ?? Math.max(1, os.cpus().length - 1));
-const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10) };
+const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), ...(args.trace ? { trace: true } : {}) };
 const seeds = String(args.seeds ?? '10').includes(',') ? String(args.seeds).split(',').map(Number)
   : Array.from({ length: Number(args.seeds ?? 10) }, (_, index) => index + 1);
 
