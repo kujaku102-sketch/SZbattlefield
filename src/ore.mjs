@@ -6,6 +6,7 @@
 //   line 1 (first member)   { kind: "forge-ore", schema: 1, featureVersion, featureNames, stateNames, game, rules, cpus, ... }
 //   then, for every match, a block:
 //     { "job", "seed", "seat", "rev", "turn", "s": [state features], "c": [candidate 0, candidate 1, ...], "t": [teacher value or null, ...],
+//       "e": [entry 0, entry 1, ...] (the legal actions before their options are known), "eo": [entry of each candidate, -1 for the extra one], "ek": entry the teacher's action comes from or null,
 //       "k": chosen candidate index or null, "why": "own" | "no-gain" | "no-supported-move" [":baseline" | ":unmapped"] }      one line per decision of a teacher seat
 //     { "match": true, "job", "seed", "decks", "firstSeat", "status", "outcome", "turns", "decisions": n, "sha256": hash of the decision lines }
 // A candidate is sparse: [[feature index, value], ...] (a zero is not written; values to 4 significant digits). The candidates and their features are made from the
@@ -17,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { decisionFeatures, FEATURE_VERSION, STATE_NAMES, CAND_NAMES } from '../cpus/learned/features.mjs';
-import { actionSignature, buildCandidates } from '../cpus/learned/candidates.mjs';
+import { actionSignature, buildCandidates, entryIndexOf } from '../cpus/learned/candidates.mjs';
 
 export const ORE_SCHEMA = 1;
 const sig = (value) => (value === 0 ? 0 : Number(Number(value).toPrecision(4)));
@@ -42,7 +43,8 @@ export function appendOreBlock(dir, tag, header, lines) {
 //   sim                   the decision the teacher was given, only to turn the moves it rated into actions (src/sim-host.mjs); may be null
 //   intent                what the teacher returned
 //   meta                  { job, seed, seat, rev, turn }       timing  ({ planMs, featureMs, candidates }) => void
-export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null }) {
+//   history               what the seat did earlier in this turn: { moves, used: Map } (cpus/learned/features.mjs)
+export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined }) {
   if (query.requiredInput !== null) return null;
   const last = cpu.lastDecision ?? null;
   if (last?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(last.why)) return null;
@@ -50,7 +52,7 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
   const t0 = process.hrtime.bigint();
   const built = buildCandidates(query, queryAction);
   const t1 = process.hrtime.bigint();
-  const features = decisionFeatures(query, built);
+  const features = decisionFeatures(query, built, history);
   if (timing) timing({ planCalls: built.planCalls, planMs: Number(t1 - t0) / 1e6, featureMs: Number(process.hrtime.bigint() - t1) / 1e6, candidates: features.cands.length });
   if (features.cands.length === 0) return null;
   const index = new Map(built.cands.map((candidate, i) => [candidate.sig, i]));
@@ -67,7 +69,9 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
       if (i !== undefined) t[i] = sig(gain.value);
     }
   }
-  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why });
+  const eo = features.cands.map((_, i) => built.cands[i]?.entryIndex ?? -1);
+  const ek = entryIndexOf(query, intent.value.action);
+  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek });
 }
 
 export function matchLine(result, decisionLines) {

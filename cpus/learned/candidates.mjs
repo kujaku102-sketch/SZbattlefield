@@ -49,29 +49,42 @@ function fromOption(entry, request, option) {
   return null;
 }
 
-// Returns { cands, unsupported: [type, ...], planCalls }.
+// One legal-actions entry as candidates: { cands, unsupported: type | null, planCalls }. A fixed entry is one candidate; an intent entry costs one planning call.
+export function planEntry(query, entry, entryIndex, queryAction) {
+  if (entry.kind === 'fixed') { const c = fromAction(entry, entry.action); c.entryIndex = entryIndex; return { cands: [c], unsupported: null, planCalls: 0 }; }
+  if (entry.kind !== 'intent' || typeof queryAction !== 'function') return { cands: [], unsupported: entry.actionType ?? entry.kind, planCalls: 0 };
+  const planned = queryAction({ expectedRevision: query.status.revision, actionId: entry.actionId, selections: [] });
+  if (!planned.ok) return { cands: [], unsupported: entry.actionType, planCalls: 1 };
+  if (planned.value.completion) return { cands: [{ ...fromAction(entry, planned.value.completion.action), complete: planned.value.completion.action, entryIndex }], unsupported: null, planCalls: 1 };
+  const requests = planned.value.selectionRequests ?? [];
+  if (requests.length !== 1 || !isSinglePick(requests[0])) return { cands: [], unsupported: entry.actionType, planCalls: 1 };
+  const cands = []; const seen = new Set();
+  for (const option of requests[0].options) {
+    const candidate = fromOption(entry, requests[0], option);
+    if (!candidate) break;
+    if (seen.has(candidate.sig)) continue;
+    seen.add(candidate.sig); candidate.entryIndex = entryIndex; cands.push(candidate);
+  }
+  return { cands, unsupported: cands.length === 0 ? entry.actionType : null, planCalls: 1 };
+}
+
+// Returns { cands, unsupported: [type, ...], planCalls } for the whole decision.
 export function buildCandidates(query, queryAction) {
-  const revision = query.status.revision;
   const cands = []; const unsupported = []; let planCalls = 0;
-  for (const entry of query.legalActions) {
-    if (entry.kind === 'fixed') { cands.push(fromAction(entry, entry.action)); continue; }
-    if (entry.kind !== 'intent' || typeof queryAction !== 'function') { unsupported.push(entry.actionType ?? entry.kind); continue; }
-    planCalls += 1;
-    const planned = queryAction({ expectedRevision: revision, actionId: entry.actionId, selections: [] });
-    if (!planned.ok) { unsupported.push(entry.actionType); continue; }
-    if (planned.value.completion) { cands.push({ ...fromAction(entry, planned.value.completion.action), complete: planned.value.completion.action }); continue; }
-    const requests = planned.value.selectionRequests ?? [];
-    if (requests.length !== 1 || !isSinglePick(requests[0])) { unsupported.push(entry.actionType); continue; }
-    const seen = new Set(); let made = 0;
-    for (const option of requests[0].options) {
-      const candidate = fromOption(entry, requests[0], option);
-      if (!candidate) break;
-      if (seen.has(candidate.sig)) continue;
-      seen.add(candidate.sig); cands.push(candidate); made += 1;
-    }
-    if (made === 0) unsupported.push(entry.actionType);
+  for (const [entryIndex, entry] of query.legalActions.entries()) {
+    const planned = planEntry(query, entry, entryIndex, queryAction);
+    planCalls += planned.planCalls; cands.push(...planned.cands);
+    if (planned.unsupported) unsupported.push(planned.unsupported);
   }
   return { cands, unsupported, planCalls };
+}
+
+// The index of the legal-actions entry the teacher's action comes from (a fixed entry by its action, an intent entry by its kind and card), or null.
+export function entryIndexOf(query, action) {
+  const wanted = actionSignature(action);
+  const ref = action.cardRef ?? action.attackerRef ?? null;
+  const index = query.legalActions.findIndex((entry) => entry.kind === 'fixed' ? actionSignature(entry.action) === wanted : entry.actionType === action.type && (entry.base?.cardRef ?? entry.base?.attackerRef ?? null) === ref);
+  return index < 0 ? null : index;
 }
 
 // The final action of a chosen candidate (a fixed one is the entry's own action; a planned one needs one more planning call). null if the planner refuses.

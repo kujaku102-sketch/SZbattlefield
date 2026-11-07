@@ -10,8 +10,12 @@
 //   queryView(query)                       -> the view every function below reads (a copy of just the fields used)
 //   stateFeatures(view)                    -> Float64Array(STATE_NAMES.length)
 //   candidateFeatures(ctx, candidate)      -> Float64Array(CAND_NAMES.length)         (φ(s,a): the move, and the state where it matters)
-//   decisionFeatures(query, candidates)    -> { state, cands: Float64Array[] }         (candidates: cpus/learned/candidates.mjs)
-export const FEATURE_VERSION = 2;
+//   decisionFeatures(query, candidates, history) -> { state, cands, entries }           (candidates: cpus/learned/candidates.mjs)
+//
+// `history` is what the seat itself has done earlier in this turn: { moves, used: Map(`${type}:${cardRef}` -> times) }. It is the seat's own record of its own
+// accepted moves, not something read from the game. `entries` are the same features for the legal actions before their options are known (one per entry of
+// query.legalActions, in order): a CPU that picks the entry first and only then asks for its options scores those.
+export const FEATURE_VERSION = 3;
 
 const KW = ['QA', 'SECURITY', 'CONTACT', 'HACKING', 'ENCRYPTION', 'PROTECT', 'BACKUP', 'LOGIN', 'LOGOUT', 'RESIDENT', 'UPDATE', 'RESPONSE', 'PROXY', 'DECOY'];
 const TYPES = ['install', 'recoverRegistry', 'activateScript', 'activateAbility', 'endTurn', 'attack', 'executeCard', 'setScript', 'redeploy', 'executeSpell', 'activateCardEffect', 'other'];
@@ -31,6 +35,8 @@ export const CAND_NAMES = Object.freeze([
   'atk_user', 'atk_ob', 'a_atk', 'a_hp', 't_atk', 't_hp', 'kills', 'dies', 'dmg_frac', 'lethal', 'crosses', 'tgt_own', 'tgt_foe',
   'end_x_memleft', 'end_x_ready', 'end_x_playable', 'atk_x_strdiff', 'atk_x_oppasleep', 'place_x_boarddiff', 'place_x_hand',
   'cost_rank', 'n_cands', 'max_afford_cost',
+  // what the seat has done this turn: this card's move done before, the turn's moves so far, and what is left to try (for ending the turn)
+  'used_n', 'moves_done', 'end_x_moves', 'end_x_untried', 'entry_open',
   // the candidate that is no move of this list: what the game's own CPU does with the kinds of action the list has no candidate for
   'type_baseline', 'unsupported_n', 'base_x_memory', 'base_x_hand'
 ]);
@@ -107,7 +113,7 @@ export function stateFeatures(view) {
 }
 
 // candidates: [{ kind: 'move' | 'baseline', type, cardRef?, targetRef?, targetUser?, zone?, host? , sig }]  (cpus/learned/candidates.mjs)
-export function decisionContext(view, candidates, unsupported) {
+export function decisionContext(view, candidates, unsupported, history = { moves: 0, used: new Map() }) {
   const moves = candidates.filter((c) => c.kind === 'move');
   const mine = board(view.me.front); const theirs = board(view.opp.front);
   const acting = (c) => (c.cardRef ? view.byRef.get(c.cardRef) ?? null : null);
@@ -115,7 +121,8 @@ export function decisionContext(view, candidates, unsupported) {
   const sorted = [...costs].sort((x, y) => x - y);
   const nonEnd = moves.filter((c) => c.type !== 'endTurn').length;
   const maxAfford = Math.max(0, ...moves.filter((c) => c.type !== 'attack' && c.type !== 'endTurn').map((c) => acting(c)?.cost ?? 0).filter((cost) => cost <= view.me.memory));
-  return { view, moves, unsupported, mine, theirs, nonEnd, sorted, maxAfford, acting, count: moves.length };
+  const untried = moves.filter((c) => c.type !== 'endTurn' && (history.used.get(`${c.type}:${c.cardRef ?? ''}`) ?? 0) === 0).length;
+  return { view, moves, unsupported, mine, theirs, nonEnd, sorted, maxAfford, acting, count: moves.length, history, untried };
 }
 
 function crossings(player, strAfter) {
@@ -148,10 +155,13 @@ export function candidateFeatures(ctx, c) {
   if (c.host) set('dest_host', 1);
   set('front_free', Math.max(0, view.me.frontLimit - view.me.front.length) / 5);
   const target = c.targetRef ? view.byRef.get(c.targetRef) ?? null : null;
+  if (c.open) set('entry_open', 1);
+  const usedBefore = ctx.history.used.get(`${c.type}:${c.cardRef ?? ''}`) ?? 0;
+  if (usedBefore > 0) set('used_n', Math.min(1, usedBefore / 3));
   if (c.type === 'attack' && card) {
-    set('atk_user', c.targetUser ? 1 : 0); set('atk_ob', c.targetUser ? 0 : 1);
+    if (!c.open) { set('atk_user', c.targetUser ? 1 : 0); set('atk_ob', c.targetUser ? 0 : 1); }
     set('a_atk', card.atk / 10); set('a_hp', card.hp / 10);
-    if (target) {
+    if (c.open) { /* the target is not known yet */ } else if (target) {
       set('t_atk', target.atk / 10); set('t_hp', target.hp / 10);
       set('kills', card.atk >= target.hp ? 1 : 0); set('dies', target.atk >= card.hp ? 1 : 0);
     } else if (c.targetUser) {
@@ -162,13 +172,14 @@ export function candidateFeatures(ctx, c) {
     }
     set('atk_x_strdiff', (view.me.str - view.opp.str) / 20);
     set('atk_x_oppasleep', ctx.theirs.asleep / 5);
-  } else if (target) {
+  } else if (target && !c.open) {
     // a move with a target that is not an attack (a spell, a card effect)
     set('t_atk', target.atk / 10); set('t_hp', target.hp / 10);
     set(view.ownRefs.has(target.ref) ? 'tgt_own' : 'tgt_foe', 1);
   }
   if (c.type === 'endTurn') {
     set('end_x_memleft', memory / 10); set('end_x_ready', ctx.mine.ready / 5); set('end_x_playable', ctx.nonEnd / 20);
+    set('end_x_moves', ctx.history.moves / 20); set('end_x_untried', Math.min(1, ctx.untried / 10));
   }
   if (PLACING.has(c.type)) {
     set('place_x_boarddiff', (ctx.mine.obs - ctx.theirs.obs) / 5); set('place_x_hand', view.me.handN / 10);
@@ -177,6 +188,7 @@ export function candidateFeatures(ctx, c) {
     set('max_afford_cost', card && card.cost === ctx.maxAfford && card.cost <= memory ? 1 : 0);
   }
   set('n_cands', ctx.count / 40);
+  set('moves_done', Math.min(1, ctx.history.moves / 20));
   return f;
 }
 
@@ -192,10 +204,23 @@ export function baselineCandidate(ctx) {
 
 // candidates: the result of buildCandidates(query, queryAction): { cands: [...move candidates], unsupported: [types] }.
 // The vectors come in the order of `cands`; one more, at the end, stands for "let the game's own CPU decide" when there are kinds of action with no candidate.
-export function decisionFeatures(query, { cands, unsupported }) {
+export function decisionFeatures(query, { cands, unsupported }, history = { moves: 0, used: new Map() }, { withEntries = true } = {}) {
   const view = queryView(query);
-  const ctx = decisionContext(view, cands, unsupported);
+  const ctx = decisionContext(view, cands, unsupported, history);
   const vectors = cands.map((c) => candidateFeatures(ctx, c));
   if (unsupported.length > 0) vectors.push(baselineCandidate(ctx));
-  return { state: stateFeatures(view), cands: vectors };
+  let entries = null;
+  if (withEntries) {
+    const ec = entryCandidates(query);
+    const ectx = decisionContext(view, ec, unsupported, history);
+    entries = ec.map((c) => candidateFeatures(ectx, c));
+  }
+  return { state: stateFeatures(view), cands: vectors, entries, view };
+}
+
+// the legal actions as candidates before their options are known: { type, cardRef, open } (open: there is a pick to make before the action is whole)
+export function entryCandidates(query) {
+  return query.legalActions.map((entry) => entry.kind === 'fixed'
+    ? { kind: 'move', type: entry.action.type, cardRef: entry.action.cardRef ?? null, open: false }
+    : { kind: 'move', type: entry.actionType ?? 'other', cardRef: entry.base?.cardRef ?? entry.base?.attackerRef ?? null, open: true });
 }

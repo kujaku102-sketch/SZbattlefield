@@ -83,6 +83,9 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     const host = needsSim ? await simHostFor(gameDir) : null;
     const baseline = needsBaseline ? await (await loadCpu('simple')).create(gameDir) : null;
     let idle = 0;
+    // what each seat has done earlier in its turn (its own accepted moves), for the features that need it
+    const histories = { 'seat-a': { turn: null, moves: 0, used: new Map() }, 'seat-b': { turn: null, moves: 0, used: new Map() } };
+    const historyOf = (seat, turnNumber) => { const h = histories[seat]; if (h.turn !== turnNumber) { h.turn = turnNumber; h.moves = 0; h.used = new Map(); } return h; };
     const trace = limits.trace ? createTrace() : null;
     let commandNumber = 0;
     // The same command in the same state, again and again, is a loop (a command can be accepted and change nothing). `maxRepeat` such commands in a
@@ -133,7 +136,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       }
       if (oreLines && cpus[actor].needsSim === true) {
         try {
-          const line = recordDecision({ query, queryAction: ports[actor].queryAction, sim: view.sim ?? null, cpu: cpus[actor], intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null },
+          const line = recordDecision({ query, queryAction: ports[actor].queryAction, sim: view.sim ?? null, cpu: cpus[actor], intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null),
             timing: ({ planCalls, planMs, featureMs, candidates }) => { (result.featureTiming ??= []).push([candidates, Math.round(planMs * 1000) / 1000, Math.round(featureMs * 1000) / 1000, planCalls]); } });
           if (line) oreLines.push(line);
         } catch (error) { note('record_error', { rev: status.revision, message: String(error?.message ?? error), stack: String(error?.stack ?? '').split(String.fromCharCode(10)).slice(0, 3).join(' | ') }); }
@@ -163,6 +166,10 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       const kind = submitted.ok ? submitted.value?.kind : 'error';
       if (kind === 'accepted') {
         idle = 0; result.commands += 1;
+        if (!['answerChoice', 'declineChoice', 'keepOpeningHand', 'openingMulligan'].includes(intent.value.action.type)) {
+          const h = historyOf(actor, query.observation?.turnNumber ?? null); const a = intent.value.action;
+          const key = `${a.type}:${a.cardRef ?? a.attackerRef ?? ''}`; h.moves += 1; h.used.set(key, (h.used.get(key) ?? 0) + 1);
+        }
         const key = `${actor}|${JSON.stringify(intent.value.action)}`;
         repeat = key === repeat.key && digest === repeat.digest ? { key, digest, count: repeat.count + 1 } : { key, digest, count: 1 };
         {
