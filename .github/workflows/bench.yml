@@ -1,7 +1,9 @@
-# DRAFT. Not used yet: nothing has been pushed, and this workflow only runs when started by hand (workflow_dispatch).
+# Runs only when started by hand (workflow_dispatch).
 #
 # Plays one table of CPU-against-CPU matches split into shards, one shard per job, then joins the shards and reports.
 # Every shard must run in the same environment (node version, game commit, CPU versions): merge refuses otherwise.
+# The actions run on node 24 (checkout v7, setup-node v7, upload-artifact v7, download-artifact v8). The runner image is pinned (ubuntu-24.04) and its
+# version is written into env.json (info, not part of the key); the node version is pinned exactly (NODE_VERSION).
 name: bench
 
 on:
@@ -31,19 +33,19 @@ env:
 
 jobs:
   shard:
-    runs-on: ubuntu-latest          # 4 vCPU, 16 GB on public repositories
+    runs-on: ubuntu-24.04           # 4 vCPU, 16 GB on public repositories. Pinned, not ubuntu-latest: the image a result was made on should not change under it
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]         # keep in sync with the `shards` input
     steps:
-      - uses: actions/checkout@v4   # this repository
-      - uses: actions/checkout@v4   # the game, at the commit to test
+      - uses: actions/checkout@v7   # this repository
+      - uses: actions/checkout@v7   # the game, at the commit to test
         with:
           repository: kujaku102-sketch/Siege_Zeke_openbeta
           ref: ${{ inputs.game_commit }}
           path: game
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
       # Inputs reach the shell only as environment variables (never `${{ ... }}` inside a run: script), so a value cannot be run as a command.
@@ -65,7 +67,7 @@ jobs:
           if [ "$SWAP" = "true" ]; then extra+=(--swap); fi
           node src/run.mjs --a "$CPU_A" --b "$CPU_B" --seeds "$SEEDS" "${extra[@]}" \
             --shard "$SHARD/$SHARDS" --workers 3 --out "out/shard-$SHARD-of-$SHARDS"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()                # a stopped shard keeps what it finished; run it again to continue
         with:
           name: shard-${{ matrix.shard }}
@@ -75,20 +77,20 @@ jobs:
   merge:
     needs: shard
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: parts/
       - name: Join and report
         run: |
           node src/merge.mjs --out merged parts/shard-*/shard-*
           node src/report.mjs merged
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: merged

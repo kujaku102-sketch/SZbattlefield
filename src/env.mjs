@@ -37,7 +37,9 @@ export async function describeEnv({ gameDir, cpuSpecs, limits }) {
       game: { subject: game.subject, dir: game.dir },
       cpuFiles: Object.fromEntries(Object.entries(cpus).map(([spec, version]) => [spec, version.files])),
       machine: { cpu: os.cpus()[0]?.model, logicalCores: os.cpus().length, memoryGB: Math.round(os.totalmem() / 2 ** 30 * 10) / 10 },
-      platform: `${os.platform()} ${os.arch()} ${os.release()}`
+      platform: `${os.platform()} ${os.arch()} ${os.release()}`,
+      // set by GitHub-hosted runners: which image the results were made on
+      runner: process.env.ImageOS ? { imageOS: process.env.ImageOS, imageVersion: process.env.ImageVersion ?? null } : null
     }
   };
 }
