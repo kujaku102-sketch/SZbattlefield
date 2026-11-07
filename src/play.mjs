@@ -2,6 +2,8 @@
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { loadSimHost } from './sim-host.mjs';
+import { loadCpu } from '../cpus/index.mjs';
 
 const SEATS = ['seat-a', 'seat-b'];
 const OPENING = new Set(['keepOpeningHand', 'openingMulligan']);
@@ -17,10 +19,16 @@ async function loadGame(gameDir) {
     authority: await imp('src/game/runtime/authority.js'),
     port: await imp('src/adapters/local-runtime-port.js'),
     versions: await imp('src/game/runtime/versions.js'),
+    tx: await imp('src/game/runtime/transaction.js'),
+    record: await imp('src/game/runtime/match-record.js'),
+    contract: await imp('src/adapters/port-contract.js'),
     decks: await imp('src/data/start-decks.js')
   };
   return game;
 }
+
+let simHost = null;
+async function simHostFor(gameDir) { if (simHost?.dir !== gameDir) simHost = { dir: gameDir, host: await loadSimHost(gameDir) }; return simHost.host; }
 
 export async function startDeckIds(gameDir) { return (await loadGame(gameDir)).decks.START_DECKS.map((deck) => deck.id); }
 
@@ -44,10 +52,17 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       gameOptions: { mode: 'ai', playerDeckId: job.deckA, aiDeckId: job.deckB, openingProtocol: 'v2.4' }
     });
     if (!created.ok) { note('create_failed', { error: created.error }); return result; }
-    const coordinator = g.port.createLocalRuntimeCoordinator({ authority: created.value, sessionGeneration: 1 });
-    if (!coordinator.ok) { note('coordinator_failed', { error: coordinator.error }); return result; }
-    const co = coordinator.value;
-    const ports = Object.fromEntries(SEATS.map((seat) => [seat, co.bind({ seatId: seat }).value]));
+    // The match is held here, as an authority, and advanced with every accepted command; it is never handed to a CPU. Each step makes a port
+    // for each seat on the current authority (the same local runtime port the game's own AI match uses; making one costs nothing).
+    // A CPU that looks ahead (needsSim) gets, besides its seat's query, a sim made from the real match (src/sim-host.mjs).
+    // `baseline` is the current CPU, which such a CPU falls back on.
+    let authority = created.value;
+    const recorded = g.record.createMatchRecord(authority);
+    if (!recorded.ok) { note('record_failed', { error: recorded.error }); return result; }
+    const record = recorded.value;
+    const needsSim = SEATS.some((seat) => cpus[seat].needsSim === true);
+    const host = needsSim ? await simHostFor(gameDir) : null;
+    const baseline = needsSim ? await (await loadCpu('simple')).create(gameDir) : null;
     let idle = 0;
     let commandNumber = 0;
     let finished = false;
@@ -56,6 +71,8 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       if (ms(started) > limits.maxWallMs) { result.status = 'capped'; result.cap = `wall>${limits.maxWallMs}ms`; break; }
       // Who acts: a seat with a choice it can answer, else the active seat.
       const tq = process.hrtime.bigint();
+      const co = g.port.createLocalRuntimeCoordinator({ authority, sessionGeneration: 1 }).value;
+      const ports = Object.fromEntries(SEATS.map((seat) => [seat, co.bind({ seatId: seat }).value]));
       const queries = Object.fromEntries(SEATS.map((seat) => [seat, ports[seat].query()]));
       const queryMs = ms(tq) / SEATS.length;
       const bad = SEATS.find((seat) => !queries[seat].ok);
@@ -72,7 +89,14 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       const queryAction = (input) => { const t = process.hrtime.bigint(); const r = port.queryAction(input); planning += ms(t); return r; };
       const t0 = process.hrtime.bigint();
       let intent;
-      try { intent = cpus[actor].choose({ query, queryAction, commandId, seatId: actor }); }
+      try {
+        const view = { query, queryAction, commandId, seatId: actor };
+        if (cpus[actor].needsSim === true) {
+          view.baseline = () => baseline.choose({ query, queryAction, commandId, seatId: actor });
+          if (query.requiredInput === null) view.sim = host.open({ authority, seat: actor });
+        }
+        intent = cpus[actor].choose(view);
+      }
       catch (error) {
         note('cpu_exception', { seat: actor, revision: status.revision, message: String(error?.message ?? error), stack: String(error?.stack ?? '').split('\n').slice(0, 4).join(' | ') });
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; } continue;
@@ -85,7 +109,18 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       result.choose.push(round(chooseMs)); result.planning.push(round(planning)); result.queryMs.push(round(queryMs));
       const ts = process.hrtime.bigint();
       let submitted;
-      try { submitted = port.submit(intent.value); }
+      try {
+        const bound = g.contract.makeBoundCommand({ contractVersion: 1, matchId, seatId: actor, seatIds: [...SEATS], sessionGeneration: 1 }, intent.value);
+        submitted = bound.ok ? g.tx.submitRuntimeCommand(authority, { matchId, actorSeat: actor }, bound.value, { tutorialAuthorized: false }) : bound;
+        if (submitted.ok && submitted.value?.kind === 'accepted') {
+          // the match record, as the local runtime port writes it
+          const encoded = g.record.encodeRecordedAction(authority, actor, bound.value.action);
+          if (!encoded.ok) throw new Error(`record: ${encoded.error?.code}`);
+          const card = g.record.recordedCardDefinition(authority.engineState, encoded.value);
+          record.commands.push({ seat: actor, action: encoded.value, ...(card ? { card } : {}) });
+          authority = submitted.value.authority;
+        }
+      }
       catch (error) {
         note('submit_exception', { seat: actor, revision: status.revision, message: String(error?.message ?? error) });
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; } continue;
@@ -103,16 +138,16 @@ export async function playGame({ gameDir, job, cpus, limits }) {
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; }
       }
     }
-    const record = co.matchRecord();
-    if (record.ok) {
-      const summary = record.value.summary;
-      result.turns = summary.turns;
-      result.outcome = summary.outcome ?? null;
-      result.hash = createHash('sha256').update(JSON.stringify([record.value.commands, summary.outcome, summary.turns])).digest('hex').slice(0, 16);
-      if (finished) result.status = 'finished';
-      if (limits.keepRecord) result.record = record.value;
-    } else note('record_failed', { error: record.error });
-    co.dispose();
+    // the result, as the local runtime port summarizes it
+    const locked = authority.engineState.victory?.lockedOutcome ?? null;
+    const outcome = locked === null ? null : locked === 'draw' ? { kind: 'draw' } : { kind: 'win', winnerSeat: authority.metadata.seatIds[locked === 'player' ? 0 : 1] };
+    result.turns = authority.engineState.turnNumber;
+    result.outcome = outcome;
+    result.hash = createHash('sha256').update(JSON.stringify([record.commands, outcome, result.turns])).digest('hex').slice(0, 16);
+    if (finished) result.status = 'finished';
+    const counters = Object.fromEntries(SEATS.filter((seat) => cpus[seat].counters).map((seat) => [seat, cpus[seat].counters]));
+    if (Object.keys(counters).length > 0) result.cpuStats = counters;
+    if (limits.keepRecord) result.record = record;
   } catch (error) {
     note('game_exception', { message: String(error?.message ?? error), stack: String(error?.stack ?? '').split('\n').slice(0, 4).join(' | ') });
     result.status = 'error';

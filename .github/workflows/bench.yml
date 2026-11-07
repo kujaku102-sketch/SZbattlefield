@@ -46,14 +46,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      # Inputs reach the shell only as environment variables (never `${{ ... }}` inside a run: script), so a value cannot be run as a command.
       - name: Play the shard
         env:
           GAME_DIR: ${{ github.workspace }}/game
           GAME_COMMIT: ${{ inputs.game_commit }}
+          CPU_A: ${{ inputs.cpu_a }}
+          CPU_B: ${{ inputs.cpu_b }}
+          SEEDS: ${{ inputs.seeds }}
+          SHARDS: ${{ inputs.shards }}
+          SHARD: ${{ matrix.shard }}
+          SWAP: ${{ inputs.swap }}
         run: |
-          node src/run.mjs --a "${{ inputs.cpu_a }}" --b "${{ inputs.cpu_b }}" --seeds "${{ inputs.seeds }}" \
-            ${{ inputs.swap == 'true' && '--swap' || '' }} \
-            --shard "${{ matrix.shard }}/${{ inputs.shards }}" --workers 3 --out "out/shard-${{ matrix.shard }}-of-${{ inputs.shards }}"
+          [[ "$GAME_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "game_commit must be a full sha"; exit 1; }
+          [[ "$SEEDS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "seeds: a count or a comma list of numbers"; exit 1; }
+          [[ "$SHARDS" =~ ^[0-9]+$ && "$SHARD" =~ ^[0-9]+$ ]] || { echo "shards must be numbers"; exit 1; }
+          extra=()
+          if [ "$SWAP" = "true" ]; then extra+=(--swap); fi
+          node src/run.mjs --a "$CPU_A" --b "$CPU_B" --seeds "$SEEDS" "${extra[@]}" \
+            --shard "$SHARD/$SHARDS" --workers 3 --out "out/shard-$SHARD-of-$SHARDS"
       - uses: actions/upload-artifact@v4
         if: always()                # a stopped shard keeps what it finished; run it again to continue
         with:

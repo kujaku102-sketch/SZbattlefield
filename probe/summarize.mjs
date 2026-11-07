@@ -25,8 +25,11 @@ const series = {
   'lean copy (no log/events/history)': (r) => r.ms.cloneLean,
   'apply one command to the lean copy': (r) => r.ms.applyLean,
   'lean copy + apply': (r) => sum(r.ms.cloneLean, r.ms.applyLean),
-  'determinized state: build, total (lean copy + derive + fill)': (r) => [r.ms.determinize.total],
-  '  of which lean copy': (r) => [r.ms.determinize.clone],
+  'copy that shares the compiled effects': (r) => r.ms.cloneShare,
+  'apply one command to the shared copy': (r) => r.ms.applyShare,
+  'shared copy + apply': (r) => sum(r.ms.cloneShare, r.ms.applyShare),
+  'determinized state: build, total (shared copy + derive + fill)': (r) => [r.ms.determinize.total],
+  '  of which copy': (r) => [r.ms.determinize.clone],
   '  of which derive the card pool and hidden slots': (r) => [r.ms.determinize.derive],
   '  of which fill the hidden slots + re-seed': (r) => [r.ms.determinize.fill],
   'try one move on a determinized state: copy of it': (r) => r.ms.cloneDet,
@@ -79,6 +82,7 @@ const summary = {
   kinds: { full: kinds('full'), lean: kinds('lean'), det: kinds('det') },
   checks: {
     leanSameAsFull: used.filter((r) => r.checks.leanSameAsFull).length,
+    shareSameAsFull: used.filter((r) => r.checks.shareSameAsFull).length,
     poolMatchesRealHidden: pool.filter((p) => p.poolMatches).length, leakedRealHiddenCards: pool.reduce((n, p) => n + p.leaked, 0),
     hiddenSlots: stats(pool.map((p) => p.slotCount)), poolMismatches: pool.filter((p) => !p.poolMatches).slice(0, 5)
   },
@@ -113,6 +117,7 @@ for (const [key, s] of parts.slice(0, 8)) line(`| ${key} | ${s.n} | ${f(s.mean)}
 line();
 line('## Checks');
 line(`- the lean copy gave the same state as the engine's own copy after the same move (log, events and history excluded): ${summary.checks.leanSameAsFull}/${used.length}`);
+ line(`- the shared copy (compiled effects shared) gave the same state as the engine's own copy after the same move: ${summary.checks.shareSameAsFull}/${used.length}`);
 line(`- the card pool the determinization drew from (decklist minus the cards the seat sees) equals the real hidden cards of that owner: ${summary.checks.poolMatchesRealHidden}/${used.length}; real hidden card objects that survived into the determinized state: ${summary.checks.leakedRealHiddenCards}`);
 line(`- hidden slots re-drawn per position: median ${summary.checks.hiddenSlots.median}, max ${summary.checks.hiddenSlots.max}`);
 line(`- result of the move on the real copy / lean copy / determinized copy: ${JSON.stringify(summary.kinds)}`);

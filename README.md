@@ -43,6 +43,15 @@ CPU オブジェクトは試合ごと・席ごとに作り直す（試合をま�
 `versionFiles` は、そのモジュールの外にあって動きを決めるファイル（`simple` ならゲーム側の方針ファイル）。CPU の版はこれらのハッシュで決まる（改行コードは無視）。
 カード名・カード番号に結びついた処理は CPU に入れない。
 
+### 先を読む CPU（`needsSim`）
+`needsSim: true` の CPU には `view.sim` と `view.baseline()` も渡る（`src/sim-host.mjs`）。本物の状態・authority・相手の隠しカードは渡らない。
+- `sim.moves`: その席の手 `[{id, type, uids}]`（エンジンの状態から作る。`src/candidates.mjs` `src/moves.mjs`）
+- `sim.now(k)`: k 番目の「見えない所を引き直した状態」（自分の山札の並び、相手の手札・山札・伏せカード。引く山は、その席がルールで見ているカードとデッキ表から作る。`src/sim.mjs`）
+- `sim.after(id, k)`: その状態にその手を当てた結果の状態（なければ null）
+- `sim.intent(id, {commandId, expectedRevision})`: 返すべき intent
+- `view.baseline()`: 今の CPU（`simple`）がこの局面で選ぶ手
+この CPU のファイルは、`cpus/` の中のファイルしか import できない（読み込むときに確かめる）。見本は `cpus/lookahead.mjs`。
+
 ## 時間の測り方（1手 = CPU が選んだコマンド1個）
 - `choose` = CPU の呼び出し全体 = `own`（CPU 自身のコード）+ `planning`（CPU が呼んだゲームの `queryAction`。ランタイムの時間）
 - `query` = 手の前にその席が取る query、`submit` = コマンドの提出。どちらもランタイム側の時間
@@ -55,9 +64,10 @@ CPU オブジェクトは試合ごと・席ごとに作り直す（試合をま�
 ## 置いてあるもの
 ```
 src/      run（対戦表を回す）、play（1 試合）、worker、table（表と shard の分け方）、env（環境の記録）、
-          merge（結果をまとめる）、compare（2 つの結果の一致を見る）、report（集計）、determinism、game-dir（ゲームの取得）
-cpus/     CPU の差し替え口（index.mjs）と、今の CPU の見本（simple.mjs）
-probe/    1 手を試す時間の計測
+          merge（結果をまとめる）、compare（2 つの結果の一致を見る）、report（集計）、determinism、game-dir（ゲームの取得）、
+          sim / sim-host / candidates / moves（先を読む CPU に渡す状態と手を、信頼する側が作る）
+cpus/     CPU の差し替え口（index.mjs）、今の CPU の見本（simple.mjs）、1 手先を読む CPU（lookahead.mjs と lookahead/eval.mjs）
+probe/    1 手を試す時間の計測、山の食い違いの原因（diagnose-pool）、手の一致（candidates）、局面の拾い方（positions）
 docs/     sharding.md
 .github/workflows/bench.yml   GitHub Actions の下書き（手動実行のみ。まだ使っていない）
 ```
