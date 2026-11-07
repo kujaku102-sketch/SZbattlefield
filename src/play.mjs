@@ -141,15 +141,30 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; } continue;
       }
       if (oreLines && shadow && cpus[actor].needsSim !== true && query.requiredInput === null) {
-        // the teacher looks at the decision this CPU has just made, on the same state; its answer is recorded, the CPU's is played
+        // a teacher looks at the decision this CPU has just made, on the same state; its answer is recorded, the CPU's is played.
+        // A language model (shadow.kind "llm") needs no sim; a looking-ahead teacher (shadow.compare, or the shadow itself) does.
         try {
-          const simView = host.open({ authority, seat: actor });
-          const teacher = shadow.create();
           const raw = ports[actor].queryAction;
-          const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: simView, baseline: () => baseline.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor }) });
-          if (teacherIntent?.ok && !(teacher.lastDecision?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why))) {
-            const line = recordDecision({ query, queryAction: raw, sim: simView, cpu: teacher, intent: teacherIntent, student: intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null), text: textLines });
+          const isLlm = shadow.kind === 'llm';
+          const needSim = !isLlm || Boolean(shadow.compare);
+          const simView = needSim ? host.open({ authority, seat: actor }) : null;
+          const base = () => baseline.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor });
+          let compare = null;
+          if (shadow.compare) {
+            const other = shadow.compare.create();
+            const otherIntent = await other.choose({ query, queryAction: raw, commandId: `${commandId}c`, seatId: actor, sim: simView, baseline: base });
+            compare = { cpu: other, sim: simView, intent: otherIntent };
+          }
+          const teacher = shadow.create();
+          const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: isLlm ? undefined : simView, baseline: base });
+          const kind = teacher.lastDecision?.kind;
+          const usable = teacherIntent?.ok && !(kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why));
+          if (teacherIntent?.ok) {
+            const line = recordDecision({ query, queryAction: raw, sim: isLlm ? null : simView, cpu: teacher, intent: teacherIntent, student: intent, compare,
+              meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null), text: textLines });
             if (line) oreLines.push(line);
+          }
+          if (usable) {
             const type = teacherIntent.value.action.type; const same = actionSignature(teacherIntent.value.action) === actionSignature(intent.value.action);
             shadowStats.n += 1; if (same) shadowStats.agree += 1;
             const t = (shadowStats.byType[type] ??= [0, 0]); t[0] += 1; if (same) t[1] += 1;

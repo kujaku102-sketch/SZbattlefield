@@ -47,10 +47,14 @@ export function appendOreBlock(dir, tag, header, lines, prefix = 'ore') {
 //   history               what the seat did earlier in this turn: { moves, used: Map } (cpus/learned/features.mjs)
 //   student               the action the seat really played, when the teacher only looked at the seat's decision (DAgger): its candidate is written as "sk"
 //   text                  an array to put the decision written out as words into (src/teachers/prompt.mjs): for reading and auditing, next to the record for learning
-export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined, student = null, text = null }) {
+//   compare               { cpu, sim, intent } a second teacher (lookahead) looking at the same decision, when the first is a language model: its values go in "t" and its answer
+//                         is written next to the model's in the text log. An answer of the model that failed (invalid, refused by the limit) goes to the text log only.
+export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined, student = null, text = null, compare = null }) {
   if (query.requiredInput !== null) return null;
   const last = cpu.lastDecision ?? null;
-  if (last?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(last.why)) return null;
+  const llm = last?.llm ?? null;
+  const skipOre = last?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(last.why);
+  if (skipOre && !(text && llm)) return null;
   if (!intent?.ok) return null;
   const t0 = process.hrtime.bigint();
   const built = buildCandidates(query, queryAction);
@@ -59,30 +63,40 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
   if (timing) timing({ planCalls: built.planCalls, planMs: Number(t1 - t0) / 1e6, featureMs: Number(process.hrtime.bigint() - t1) / 1e6, candidates: features.cands.length });
   if (features.cands.length === 0) return null;
   const index = new Map(built.cands.map((candidate, i) => [candidate.sig, i]));
-  // the teacher's action, found among the candidates; an action the candidates have none for was the game's own CPU's choice ("let the game's CPU decide")
-  let k = index.get(actionSignature(intent.value.action)) ?? null;
-  let why = last?.why ?? 'unknown';
-  if (k === null) { k = built.unsupported.length > 0 ? built.cands.length : null; why = `${why}:${k === null ? 'unmapped' : 'baseline'}`; }
-  // the value the teacher gave each move it tried, placed on the candidate that makes the same action
-  const t = features.cands.map(() => null);
-  if (sim && last?.gains) {
-    for (const gain of last.gains) {
-      const action = sim.intent(gain.id, { commandId: 'x', expectedRevision: query.status.revision })?.action;
+  const nOf = (i) => (i !== null && i !== undefined && i >= 0 && i < built.cands.length ? i + 1 : null);
+  const find = (action) => { const i = index.get(actionSignature(action)); return i !== undefined ? i : built.unsupported.length > 0 ? built.cands.length : null; };
+  // the values a looking-ahead teacher gave the moves it tried, placed on the candidate that makes the same action
+  const values = (teacher, teacherSim) => {
+    const t = features.cands.map(() => null);
+    const gains = teacher?.lastDecision?.gains;
+    if (teacherSim && gains) for (const gain of gains) {
+      const action = teacherSim.intent(gain.id, { commandId: 'x', expectedRevision: query.status.revision })?.action;
       const i = action ? index.get(actionSignature(action)) : undefined;
       if (i !== undefined) t[i] = sig(gain.value);
     }
-  }
-  const eo = features.cands.map((_, i) => built.cands[i]?.entryIndex ?? -1);
-  const ek = entryIndexOf(query, intent.value.action);
+    return t;
+  };
+  const valueSource = compare ?? { cpu, sim };
+  const t = values(valueSource.cpu, valueSource.sim);
+  const k = skipOre ? null : find(intent.value.action);
+  let why = last?.why ?? 'unknown';
+  if (!skipOre && k !== null && k >= built.cands.length) why = `${why}:baseline`;
+  if (!skipOre && k === null) why = `${why}:unmapped`;
+  const sk = student?.ok ? find(student.value.action) : undefined;
   if (text) {
     const p = buildPrompt(query, built.cands);
-    const nOf = (i) => (i !== null && i !== undefined && i >= 0 && i < built.cands.length ? i + 1 : null);
-    const skIndex = student?.ok ? index.get(actionSignature(student.value.action)) ?? null : undefined;
-    text.push(JSON.stringify({ id: `${meta.job}|${meta.seat}|${meta.rev}`, ...meta, prompt: p.user, candidates: p.candidates,
-      answers: { teacher: { n: nOf(k), baseline: k === built.cands.length, why, scores: built.cands.map((_, i) => t[i]) }, ...(skIndex !== undefined ? { student: { n: nOf(skIndex) } } : {}) } }));
+    const answers = {};
+    if (llm) {
+      answers.llm = { n: nOf(k), reason: llm.reason ?? '', error: llm.error ?? null, model: llm.model, usd: llm.usd ?? 0, usage: llm.usage ?? null, latencyMs: llm.latencyMs ?? null, cached: Boolean(llm.cached), promptHash: llm.promptHash };
+      if (compare?.intent?.ok) answers.teacher = { n: nOf(find(compare.intent.action ?? compare.intent.value.action)), baseline: false, why: compare.cpu.lastDecision?.why ?? '', scores: t };
+    } else answers.teacher = { n: nOf(k), baseline: k !== null && k >= built.cands.length, why, scores: t };
+    if (sk !== undefined) answers.student = { n: nOf(sk) };
+    text.push(JSON.stringify({ id: `${meta.job}|${meta.seat}|${meta.rev}`, ...meta, prompt: p.user, candidates: p.candidates, answers }));
   }
-  const extra = student?.ok ? { sk: index.get(actionSignature(student.value.action)) ?? (built.unsupported.length > 0 ? built.cands.length : null) } : {};
-  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek, ...extra });
+  if (skipOre) return null;
+  const eo = features.cands.map((_, i) => built.cands[i]?.entryIndex ?? -1);
+  const ek = entryIndexOf(query, intent.value.action);
+  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek, ...(sk !== undefined ? { sk } : {}), ...(cpu.src ? { src: cpu.src } : {}) });
 }
 
 export function textHeader(extra = {}) {

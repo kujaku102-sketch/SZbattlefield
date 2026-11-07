@@ -14,6 +14,8 @@
 //   --max-wall-sec  ... or after this wall time (default 900)
 //   --record-text   with --record: the decisions are also written out as words (text-<tag>.jsonl.gz: the prompt, the numbered candidates, the answers) for reading and auditing
 //   --shadow <cpu>  with --record: a teacher CPU (one that looks ahead) looks at every decision of the other CPUs and its answer is recorded, the CPU's own played (DAgger)
+//   --llm-config <file>  with --shadow llm: the settings of the language model teacher (model, transport direct|replay|dry, limits on the spend; no key: that is read from the environment)
+//   --shadow-compare <cpu>  with --shadow llm: a looking-ahead CPU answers the same decisions too, to be read next to the model's
 //   --max-loop N    ... or when the same board with the same kind of window comes back N times in one turn, whoever acts (a loop between the two seats; default 30; cap "loop")
 //   --max-repeat N  ... or when the same command is accepted N times in a row in the same state (a loop; default 10; cap "repeat")
 //   --only <text>   only jobs whose id contains the text (for a re-run of one match)
@@ -54,7 +56,7 @@ const cpuB = args.b ?? 'simple';
 const shard = args.shard ? parseShard(args.shard) : null;
 const outDir = path.resolve(args.out ?? path.join('cpu-bench-out', `${cpuA.replace(/[^\w.-]+/g, '_')}-${cpuB.replace(/[^\w.-]+/g, '_')}`, ...(shard ? [`shard-${shard.index}-of-${shard.count}`] : [])));
 const workers = Number(args.workers ?? Math.max(1, os.cpus().length - 1));
-const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(typeof args.shadow === 'string' ? { shadow: args.shadow } : {}), ...(args['watch-noop'] ? { watchNoop: true } : {}), ...(args.trace ? { trace: true } : {}) };
+const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(typeof args.shadow === 'string' ? { shadow: args.shadow } : {}), ...(typeof args['llm-config'] === 'string' ? { llmConfig: path.resolve(args['llm-config']) } : {}), ...(typeof args['shadow-compare'] === 'string' ? { compare: args['shadow-compare'] } : {}), ...(args['watch-noop'] ? { watchNoop: true } : {}), ...(args.trace ? { trace: true } : {}) };
 const seeds = String(args.seeds ?? '10').includes(',') ? String(args.seeds).split(',').map(Number)
   : Array.from({ length: Number(args.seeds ?? 10) }, (_, index) => index + 1);
 
@@ -143,7 +145,7 @@ await new Promise((resolve) => {
     const next = () => {
       current = queue.shift() ?? null;
       if (!current) { leaving = true; child.send({ type: 'exit' }); return; }
-      child.send({ type: 'job', job: current, gameDir, limits, record: recordOut });
+      child.send({ type: 'job', job: current, gameDir, limits, record: recordOut, workers });
     };
     child.on('message', (message) => {
       if (message.type === 'ready') return next();
