@@ -65,6 +65,9 @@ export async function playGame({ gameDir, job, cpus, limits }) {
     const baseline = needsSim ? await (await loadCpu('simple')).create(gameDir) : null;
     let idle = 0;
     let commandNumber = 0;
+    // The same command in the same state, again and again, is a loop (a command can be accepted and change nothing). `maxRepeat` such commands in a
+    // row end the match as capped (cap "repeat"). "The state" is what the two seats see (both queries' observations, without the revision).
+    let repeat = { key: null, digest: null, count: 0 };
     let finished = false;
     for (;;) {
       if (result.commands >= limits.maxCommands) { result.status = 'capped'; result.cap = `commands>=${limits.maxCommands}`; break; }
@@ -83,6 +86,7 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       const query = queries[actor].value;
       commandNumber += 1;
       const commandId = `c${commandNumber}`;
+      const digest = createHash('md5').update(JSON.stringify(SEATS.map((seat) => { const { revision, ...rest } = queries[seat].value.observation; return rest; }))).digest('hex');
       // The CPU gets this seat's query and a planner on this seat's port, nothing else.
       let planning = 0;
       const port = ports[actor];
@@ -129,6 +133,9 @@ export async function playGame({ gameDir, job, cpus, limits }) {
       const kind = submitted.ok ? submitted.value?.kind : 'error';
       if (kind === 'accepted') {
         idle = 0; result.commands += 1;
+        const key = `${actor}|${JSON.stringify(intent.value.action)}`;
+        repeat = key === repeat.key && digest === repeat.digest ? { key, digest, count: repeat.count + 1 } : { key, digest, count: 1 };
+        if (repeat.count >= limits.maxRepeat) { result.status = 'capped'; result.cap = `repeat>=${limits.maxRepeat}`; result.repeated = { seat: actor, action: intent.value.action?.type ?? null }; break; }
         if (result.firstSeat === null && !OPENING.has(intent.value.action.type)) result.firstSeat = actor;
       } else {
         note('illegal_move', {

@@ -1,0 +1,11 @@
+{
+  "id": "nomemory",
+  "description": "A user who crosses an incident threshold does not gain +1 memory limit and +1 active memory (the opponent's 1 draw stays).",
+  "edits": [
+    {
+      "file": "src/game/core/deal-damage.js",
+      "find": "    victim.permanentMemory += 1;\n    victim.memory += 1;\n",
+      "replace": ""
+    }
+  ]
+}

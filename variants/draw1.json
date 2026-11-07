@@ -1,0 +1,11 @@
+{
+  "id": "draw1",
+  "description": "Both players draw 1 card on their first turn (the rule: the first player draws none, the second draws 2).",
+  "edits": [
+    {
+      "file": "src/game/core/turn.js",
+      "find": "  let drawCount = 1;\n  if (player.turnsTaken === 0 && playerId === state.firstPlayer) drawCount = 0;\n  else if (player.turnsTaken === 0) drawCount = 2;\n",
+      "replace": "  let drawCount = 1;\n"
+    }
+  ]
+}

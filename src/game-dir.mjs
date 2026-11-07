@@ -10,13 +10,22 @@ import { existsSync, renameSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { makeVariantCopy, variantOf } from './variants.mjs';
 
 export const GAME_SOURCE = process.env.GAME_SOURCE ?? 'https://github.com/kujaku102-sketch/Siege_Zeke_openbeta';
 const GAME_REF = process.env.GAME_REF ?? 'main';
 const WORK = process.env.SZB_WORK ?? os.tmpdir();
 const git = (dir, ...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-export function resolveGameDir(commit = null) {
+// `variant`: the id of a rule variant (variants/<id>.json); the game is then a copy of the checkout with the variant's edits (src/variants.mjs).
+export function resolveGameDir(commit = null, variant = null) {
+  const base = resolveBaseGameDir(commit);
+  if (!variant) return base;
+  const info = describeGame(base);
+  return makeVariantCopy(base, `${base}-${variant}`, variant, info);
+}
+
+function resolveBaseGameDir(commit) {
   commit ??= process.env.GAME_COMMIT ?? null;
   if (process.env.GAME_DIR) {
     const dir = path.resolve(process.env.GAME_DIR);
@@ -41,6 +50,8 @@ export function resolveGameDir(commit = null) {
 }
 
 export function describeGame(dir) {
+  const variant = variantOf(dir);
+  if (variant) return { dir, commit: variant.commit, subject: `${variant.subject ?? ''} + variant ${variant.id}`, dirty: false, variant: { id: variant.id, hash: variant.hash } };
   try { return { dir, commit: git(dir, 'rev-parse', 'HEAD'), subject: git(dir, 'log', '-1', '--format=%s'), dirty: git(dir, 'status', '--porcelain') !== '' }; }
   catch { return { dir, commit: null, subject: null, dirty: null }; }
 }

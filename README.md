@@ -19,7 +19,7 @@ node src/report.mjs out/simple-simple          # summary.md / summary.json
 ```
 - `--a` / `--b`: CPU の指定。名前（`cpus/<名前>.mjs`）かファイルのパス。後ろに `?キー=値&…` を付けるとパラメータが CPU に渡る（重みの調整用）。A が seat-a、B が seat-b。`--swap` で席を入れ替えた分も回す（違う CPU 同士を比べるときは必須）。
 - 表は、スタートデッキ全部の総当たり（先手側デッキ × 後手側デッキ。同じデッキ同士も含む）× 固定シード。先手・後手はゲーム自身の開始ダイス（シードで決まる）で決まり、結果の `firstSeat` に残る。
-- 試合の打ち切り: 受理されたコマンド 3000 個、または 900 秒（`--max-commands` `--max-wall-sec`）。8 手続けて受理されなければ「止まった（stuck）」。
+- 試合の打ち切り: 受理されたコマンド 3000 個、900 秒、または同じコマンドが同じ状態（両席の見え方）で 10 回続いたとき（繰り返し。`--max-commands` `--max-wall-sec` `--max-repeat`）。8 手続けて受理されなければ「止まった（stuck）」。
 - 同じシード・同じ CPU なら、何度回しても、どの機械で回しても同じ結果になる（`src/determinism.mjs`、`src/compare.mjs` で確かめられる）。
 
 ## 分けて回す・続ける・合わせる
@@ -30,6 +30,9 @@ node src/merge.mjs --out merged shards/1 shards/2 shards/3 shards/4
 node src/report.mjs merged
 ```
 詳しくは [docs/sharding.md](docs/sharding.md)。
+
+## ルールを 1 つ変えた試合（実験）
+`--variant <id>` は、ゲームのコピーに `variants/<id>.json` の書き換えを当てて回す（`src/variants.mjs`）。ゲームのリポジトリは変えない。使ったルールは `env.json` に入り、違うルールの結果は混ざらない。
 
 ## CPU の差し替え口
 CPU は `{ id, create(gameDir, params) -> { choose(view) }, versionFiles?(gameDir) }` を default export するモジュール（`cpus/simple.mjs` が見本）。
@@ -63,7 +66,7 @@ CPU オブジェクトは試合ごと・席ごとに作り直す（試合をま�
 
 ## 置いてあるもの
 ```
-src/      run（対戦表を回す）、play（1 試合）、worker、table（表と shard の分け方）、env（環境の記録）、
+src/      arena（CPU A 対 B の勝敗の集計）、variants（ルールを変えたゲームのコピー）、run（対戦表を回す）、play（1 試合）、worker、table（表と shard の分け方）、env（環境の記録）、
           merge（結果をまとめる）、compare（2 つの結果の一致を見る）、report（集計）、determinism、game-dir（ゲームの取得）、
           sim / sim-host / candidates / moves（先を読む CPU に渡す状態と手を、信頼する側が作る）
 cpus/     CPU の差し替え口（index.mjs）、今の CPU の見本（simple.mjs）、1 手先を読む CPU（lookahead.mjs と lookahead/eval.mjs）

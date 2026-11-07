@@ -25,10 +25,10 @@ export async function describeEnv({ gameDir, cpuSpecs, limits }) {
   for (const spec of [...new Set(cpuSpecs)]) cpus[spec] = await cpuVersion(spec, gameDir);
   const key = {
     node: process.version,
-    game: { commit: game.commit, dirty: game.dirty },
+    game: { commit: game.commit, dirty: game.dirty, ...(game.variant ? { variant: game.variant } : {}) },
     cpus: Object.fromEntries(Object.entries(cpus).map(([spec, version]) => [spec, version.hash])),
     bench: benchHash(),
-    limits: { maxCommands: limits.maxCommands, maxWallMs: limits.maxWallMs, idle: limits.idle }
+    limits: { maxCommands: limits.maxCommands, maxWallMs: limits.maxWallMs, idle: limits.idle, maxRepeat: limits.maxRepeat }
   };
   return {
     key,

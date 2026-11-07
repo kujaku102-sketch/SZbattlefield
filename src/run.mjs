@@ -12,11 +12,13 @@
 //   --workers N     worker processes (default: logical cores - 1)
 //   --max-commands  a match is cut off (status "capped") after this many accepted commands (default 3000)
 //   --max-wall-sec  ... or after this wall time (default 900)
+//   --max-repeat N  ... or when the same command is accepted N times in a row in the same state (a loop; default 10; cap "repeat")
 //   --only <text>   only jobs whose id contains the text (for a re-run of one match)
 //   --sample N      only every k-th job so that about N matches are played (a fixed pick, for the determinism check)
 //   --reverse       play the jobs in the opposite order
 //   --commit <sha>  the game commit to test (GAME_COMMIT does the same). The game is fetched from GAME_SOURCE (default: the public Siege_Zeke_openbeta);
 //                   with neither commit nor GAME_DIR, the head of GAME_REF (default main). GAME_DIR=<path> uses a checkout as it is. See game-dir.mjs.
+//   --variant <id>  play on a copy of the game with the rule variant variants/<id>.json applied (src/variants.mjs); recorded in env.json
 //   --out <dir>     where raw.jsonl, config.json and env.json go (default: ./cpu-bench-out/<a>-<b>[/shard-i-of-n])
 //
 // The deck table is every ordered pair (deck of seat-a, deck of seat-b), same deck against itself included. Who moves first
@@ -47,11 +49,11 @@ const cpuB = args.b ?? 'simple';
 const shard = args.shard ? parseShard(args.shard) : null;
 const outDir = path.resolve(args.out ?? path.join('cpu-bench-out', `${cpuA.replace(/[^\w.-]+/g, '_')}-${cpuB.replace(/[^\w.-]+/g, '_')}`, ...(shard ? [`shard-${shard.index}-of-${shard.count}`] : [])));
 const workers = Number(args.workers ?? Math.max(1, os.cpus().length - 1));
-const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8 };
+const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10) };
 const seeds = String(args.seeds ?? '10').includes(',') ? String(args.seeds).split(',').map(Number)
   : Array.from({ length: Number(args.seeds ?? 10) }, (_, index) => index + 1);
 
-const gameDir = resolveGameDir(typeof args.commit === 'string' ? args.commit : null);
+const gameDir = resolveGameDir(typeof args.commit === 'string' ? args.commit : null, typeof args.variant === 'string' ? args.variant : null);
 const allDecks = await startDeckIds(gameDir);
 const decks = args.decks && args.decks !== 'all' ? String(args.decks).split(',') : allDecks;
 const swap = Boolean(args.swap);
