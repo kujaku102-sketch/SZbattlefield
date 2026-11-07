@@ -10,7 +10,7 @@
 // A move that was accepted and changed nothing the seat can see is not chosen again in the same turn (the same guard as cpus/lookahead.mjs). Two more guards against a
 // turn that never ends, the same ones the game's own CPU has: a card is moved (redeploy) or its effect started (activateCardEffect) once a turn, and a turn of more than
 // MOVES_PER_TURN moves of this CPU is ended.
-import { candidateFeatures, decisionContext, decisionFeatures, entryCandidates, FEATURE_VERSION, CAND_NAMES, queryView } from './features.mjs';
+import { candidateFeatures, decisionContext, decisionFeatures, entryCandidates, FEATURE_VERSION, CAND_NAMES, STATE_NAMES, queryView } from './features.mjs';
 import { buildCandidates, completeCandidate, planEntry } from './candidates.mjs';
 import { createLoopGuard } from './loopguard.mjs';
 
@@ -22,18 +22,36 @@ const dot = (W, f) => { let z = 0; for (let j = 0; j < f.length; j += 1) z += W[
 const histKeyOf = (action) => `${action.type}:${action.cardRef ?? action.attackerRef ?? ''}`;
 const CHOICES = new Set(['answerChoice', 'declineChoice', 'keepOpeningHand', 'openingMulligan']);
 
+// crossing (forgehammer src/cross.mjs): the features after the first CAND_NAMES.length are the products candidate[row] * state[col], row a and column b at F + a * C + b
+export function crossOf(cross) {
+  if (!cross) return null;
+  const rows = cross.rows.map((name) => CAND_NAMES.indexOf(name)); const cols = cross.cols.map((name) => STATE_NAMES.indexOf(name));
+  if (rows.some((j) => j < 0) || cols.some((j) => j < 0)) throw new Error('the cross of this CPU has a name this build does not');
+  return { rows, cols, base: CAND_NAMES.length };
+}
+const crossDot = (W, f, state, cross) => {
+  let z = 0; const C = cross.cols.length;
+  for (let a = 0; a < cross.rows.length; a += 1) {
+    const v = f[cross.rows[a]]; if (v === 0) continue;
+    const at = cross.base + a * C;
+    for (let b = 0; b < C; b += 1) z += W[at + b] * v * state[cross.cols[b]];
+  }
+  return z;
+};
+
 // flat: scores of a decision
-export function scoreDecision(query, queryAction, W, history) {
+export function scoreDecision(query, queryAction, W, history, cross = null) {
   const built = buildCandidates(query, queryAction);
   const features = decisionFeatures(query, built, history, { withEntries: false });
-  return { built, features, scores: features.cands.map((f) => dot(W, f)) };
+  return { built, features, scores: features.cands.map((f) => dot(W, f) + (cross ? crossDot(W, f, features.state, cross) : 0)) };
 }
 
-export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, meta = {} }) {
+export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, meta = {} }) {
   if (featureVersion !== FEATURE_VERSION || featureNames.length !== CAND_NAMES.length || featureNames.some((name, i) => name !== CAND_NAMES[i])) {
     throw new Error(`${id}: made for features v${featureVersion} (${featureNames.length}), this build has v${FEATURE_VERSION} (${CAND_NAMES.length}); forge it again`);
   }
   const W = Float64Array.from(weights ?? []);
+  const cross = crossOf(crossSpec);
   const staged = entryWeights !== null;
   const WE = staged ? Float64Array.from(entryWeights) : null;
   const WO = staged ? Float64Array.from(optionWeights) : null;
@@ -91,7 +109,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             return hand(key, query, { ok: true, value: { commandId: view.commandId, expectedRevision: revision, action } });
           };
           if (!staged) {
-            const { built, scores } = scoreDecision(query, queryAction, W, history);
+            const { built, scores } = scoreDecision(query, queryAction, W, history, cross);
             counters.planCalls += built.planCalls;
             let best = -1; let bestScore = -Infinity;
             for (let i = 0; i < scores.length; i += 1) {
