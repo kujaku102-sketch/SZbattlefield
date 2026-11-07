@@ -99,6 +99,8 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
       src: 'llm', lastDecision: null,
       async choose(view) {
         this.lastDecision = null;
+        // before the first turn (keep the hand or draw again) is not a decision of play: the game's own CPU answers it, no call is made
+        if (view.query.legalActions.some((e) => e.kind === 'fixed' && ['keepOpeningHand', 'openingMulligan'].includes(e.action?.type)) || view.query.legalActions.some((e) => e.actionType === 'openingMulligan')) { this.lastDecision = { kind: 'baseline', why: 'opening' }; return view.baseline(); }
         const built = buildCandidates(view.query, view.queryAction);
         if (built.cands.length < 2) { this.lastDecision = { kind: 'baseline', why: 'no-choice' }; return view.baseline(); }
         const prompt = buildPrompt(view.query, built.cands);
