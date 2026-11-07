@@ -128,7 +128,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
         view = { query, queryAction, commandId, seatId: actor };
         if (cpus[actor].needsSim === true || cpus[actor].needsBaseline === true) view.baseline = () => baseline.choose({ query, queryAction, commandId, seatId: actor });
         if (cpus[actor].needsSim === true && query.requiredInput === null) view.sim = host.open({ authority, seat: actor });
-        intent = cpus[actor].choose(view);
+        intent = await cpus[actor].choose(view);   // a CPU may answer with a promise (a teacher that is asked over the network)
       }
       catch (error) {
         note('cpu_exception', { seat: actor, revision: status.revision, message: String(error?.message ?? error), stack: String(error?.stack ?? '').split('\n').slice(0, 4).join(' | ') });
@@ -145,7 +145,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           const simView = host.open({ authority, seat: actor });
           const teacher = shadow.create();
           const raw = ports[actor].queryAction;
-          const teacherIntent = teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: simView, baseline: () => baseline.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor }) });
+          const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: simView, baseline: () => baseline.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor }) });
           if (teacherIntent?.ok && !(teacher.lastDecision?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why))) {
             const line = recordDecision({ query, queryAction: raw, sim: simView, cpu: teacher, intent: teacherIntent, student: intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null) });
             if (line) oreLines.push(line);
