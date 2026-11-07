@@ -11,8 +11,8 @@ const SEATS = ['seat-a', 'seat-b'];
 const OPENING = new Set(['keepOpeningHand', 'openingMulligan']);
 // What the board looks like, for telling a loop: both sides' STR and memory, every card of every zone with its sleep, damage and side, and the kind of window that is open
 // (not its ids: they change from one turn of the loop to the next). The same signature again and again in one turn is a loop.
-function boardSignature(state) {
-  const parts = [state.turnNumber, state.active, state.pending?.type ?? '', state.pending?.request?.continuation?.type ?? '', state.prompt?.type ?? ''];
+function boardSignature(state, windows = true) {
+  const parts = windows ? [state.turnNumber, state.active, state.pending?.type ?? '', state.pending?.request?.continuation?.type ?? '', state.prompt?.type ?? ''] : [state.turnNumber];
   for (const id of ['player', 'ai']) {
     const p = state.players[id];
     parts.push(p.fortressStr, p.memory, p.deck.length);
@@ -83,6 +83,8 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     const host = needsSim ? await simHostFor(gameDir) : null;
     const baseline = needsBaseline ? await (await loadCpu('simple')).create(gameDir) : null;
     let idle = 0;
+    const noop = { processes: 0, second: 0, third: 0, max: 0 };
+    let noopTurn = null; let noopCounts = new Map();
     // what each seat has done earlier in its turn (its own accepted moves), for the features that need it
     const histories = { 'seat-a': { turn: null, moves: 0, used: new Map() }, 'seat-b': { turn: null, moves: 0, used: new Map() } };
     const historyOf = (seat, turnNumber) => { const h = histories[seat]; if (h.turn !== turnNumber) { h.turn = turnNumber; h.moves = 0; h.used = new Map(); } return h; };
@@ -144,6 +146,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       result.choose.push(round(chooseMs)); result.planning.push(round(planning)); result.queryMs.push(round(queryMs));
       const ts = process.hrtime.bigint();
       trace?.before(authority.engineState);
+      const sigBefore = limits.watchNoop ? boardSignature(authority.engineState, false) : null;
       let submitted;
       try {
         const bound = g.contract.makeBoundCommand({ contractVersion: 1, matchId, seatId: actor, seatIds: [...SEATS], sessionGeneration: 1 }, intent.value);
@@ -166,6 +169,17 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       const kind = submitted.ok ? submitted.value?.kind : 'error';
       if (kind === 'accepted') {
         idle = 0; result.commands += 1;
+        if (sigBefore !== null) {
+          // a process that left the board as it was (windows left out of the board), counted per seat, board and action, in one turn
+          const st = authority.engineState;
+          if (st.turnNumber !== noopTurn) { noopTurn = st.turnNumber; noopCounts = new Map(); }
+          if (boardSignature(st, false) === sigBefore) {
+            const a = intent.value.action;
+            const key = `${actor}|${sigBefore}|${a.type}|${JSON.stringify(a.optionIds ?? a.cardRef ?? a.attackerRef ?? null)}|${JSON.stringify(a.target ?? a.destination ?? null)}`;
+            const n = (noopCounts.get(key) ?? 0) + 1; noopCounts.set(key, n);
+            noop.processes += 1; if (n === 2) noop.second += 1; if (n === 3) { noop.third += 1; (noop.third_types ??= {})[a.type] = (noop.third_types[a.type] ?? 0) + 1; } if (n > noop.max) noop.max = n;
+          }
+        }
         if (!['answerChoice', 'declineChoice', 'keepOpeningHand', 'openingMulligan'].includes(intent.value.action.type)) {
           const h = historyOf(actor, query.observation?.turnNumber ?? null); const a = intent.value.action;
           const key = `${a.type}:${a.cardRef ?? a.attackerRef ?? ''}`; h.moves += 1; h.used.set(key, (h.used.get(key) ?? 0) + 1);
@@ -196,6 +210,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     result.outcome = outcome;
     result.hash = createHash('sha256').update(JSON.stringify([record.commands, outcome, result.turns])).digest('hex').slice(0, 16);
     if (finished) result.status = 'finished';
+    if (limits.watchNoop) result.noop = noop;
     const counters = Object.fromEntries(SEATS.filter((seat) => cpus[seat].counters).map((seat) => [seat, cpus[seat].counters]));
     if (Object.keys(counters).length > 0) result.cpuStats = counters;
     if (trace) result.trace = trace.result(authority.engineState.firstPlayer === 'player' ? 0 : 1);

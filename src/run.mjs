@@ -52,7 +52,7 @@ const cpuB = args.b ?? 'simple';
 const shard = args.shard ? parseShard(args.shard) : null;
 const outDir = path.resolve(args.out ?? path.join('cpu-bench-out', `${cpuA.replace(/[^\w.-]+/g, '_')}-${cpuB.replace(/[^\w.-]+/g, '_')}`, ...(shard ? [`shard-${shard.index}-of-${shard.count}`] : [])));
 const workers = Number(args.workers ?? Math.max(1, os.cpus().length - 1));
-const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(args.trace ? { trace: true } : {}) };
+const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(args['watch-noop'] ? { watchNoop: true } : {}), ...(args.trace ? { trace: true } : {}) };
 const seeds = String(args.seeds ?? '10').includes(',') ? String(args.seeds).split(',').map(Number)
   : Array.from({ length: Number(args.seeds ?? 10) }, (_, index) => index + 1);
 

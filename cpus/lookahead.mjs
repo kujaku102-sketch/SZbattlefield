@@ -36,12 +36,12 @@ export default {
     let pending = null;              // the move handed out at the last decision: { key, looks }
     const noEffect = new Set();      // keys of moves that were accepted and changed nothing this turn
     // how often each kind of decision was made (the harness writes these into the match result)
-    const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0, windowsChanged: 0 };
+    const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0, windowsChanged: 0, loopUnavoidable: 0 };
     // what the last decision was, for a recorder that learns from this CPU (the harness reads it; nothing here depends on it):
     // { kind: 'own' | 'baseline', why, moveId (own), gains: [{ id, value }] (the average gain of every move it tried, when it tried) }
     let lastDecision = null;
-    const loopGuard = createLoopGuard();   // a window that comes back and back in one turn is answered differently (cpus/learned/loopguard.mjs)
-    let repeats = 0;
+    const loopGuard = createLoopGuard();   // what this CPU does not do: repeat a process that changes nothing, on the same board in one turn (cpus/learned/loopguard.mjs)
+    let board = '';
     let gainsOut = null;
     const hand = (key, query, result) => { pending = { key, looks: looks(query) }; return result; };
     const fallback = (view, why) => {
@@ -49,9 +49,8 @@ export default {
       lastDecision = { kind: 'baseline', why, moveId: null, gains: gainsOut };
       let result = view.baseline();
       if (result?.ok && view.query.requiredInput !== null) {
-        const changed = loopGuard.change(view.query, repeats, result);
-        if (changed !== result) counters.windowsChanged += 1;
-        result = changed;
+        result = loopGuard.answer(view.query, board, result);
+        counters.windowsChanged = loopGuard.stats.changed; counters.loopUnavoidable = loopGuard.stats.unavoidable;
       }
       if (!result?.ok) return result;
       const key = `base:${JSON.stringify(result.value.action)}`;
@@ -77,7 +76,7 @@ export default {
         if (now !== turn) { turn = now; noEffect.clear(); pending = null; }
         if (pending !== null && pending.looks === looks(query)) { noEffect.add(pending.key); counters.noEffectMoves += 1; }
         pending = null;
-        repeats = loopGuard.see(query);
+        board = loopGuard.begin(query);
         // a choice to answer, no sim, or the same decision again (the move chosen last time was not accepted): the current CPU
         if (!sim || query.requiredInput !== null || revision === last.revision) return fallback(view, !sim ? 'no-sim' : query.requiredInput !== null ? 'choice' : 'repeat');
         const candidates = sim.moves.filter((move) => move.type !== 'endTurn' && !noEffect.has(`own:${move.type}:${[...move.uids].sort().join(',')}`));

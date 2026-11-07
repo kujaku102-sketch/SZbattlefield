@@ -45,9 +45,9 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
       let pending = null;
       const noEffect = new Set();
       const history = { moves: 0, used: new Map() };            // the seat's own accepted moves this turn
-      const loopGuard = createLoopGuard();                       // a window that comes back and back in one turn is answered differently (cpus/learned/loopguard.mjs)
-      let repeats = 0;
-      const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0, planCalls: 0, turnEndedByLimit: 0, windowsChanged: 0 };
+      const loopGuard = createLoopGuard();                       // what this CPU does not do: repeat a process that changes nothing, on the same board in one turn (cpus/learned/loopguard.mjs)
+      let board = '';
+      const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0, planCalls: 0, turnEndedByLimit: 0, windowsChanged: 0, loopUnavoidable: 0 };
       const hand = (key, query, result) => {
         pending = { key, looks: looks(query), revision: query.status.revision, histKey: result?.ok ? histKeyOf(result.value.action) : null, choice: Boolean(result?.ok && CHOICES.has(result.value.action.type)) };
         return result;
@@ -56,9 +56,8 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
         counters.baseline += 1; counters.baselineWhy[why] = (counters.baselineWhy[why] ?? 0) + 1;
         let result = view.baseline();
         if (result?.ok && why === 'choice') {
-          const changed = loopGuard.change(view.query, repeats, result);
-          if (changed !== result) counters.windowsChanged += 1;
-          result = changed;
+          result = loopGuard.answer(view.query, board, result);
+          counters.windowsChanged = loopGuard.stats.changed; counters.loopUnavoidable = loopGuard.stats.unavoidable;
         }
         if (!result?.ok) return result;
         const key = `base:${JSON.stringify(result.value.action)}`;
@@ -83,7 +82,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
           if (pending !== null && revision !== pending.revision && pending.histKey && !pending.choice) { history.moves += 1; history.used.set(pending.histKey, (history.used.get(pending.histKey) ?? 0) + 1); }
           if (pending !== null && pending.looks === looks(query)) { noEffect.add(pending.key); counters.noEffectMoves += 1; }
           pending = null;
-          repeats = loopGuard.see(query);
+          board = loopGuard.begin(query);
           if (query.requiredInput !== null || revision === last.revision) return fallback(view, query.requiredInput !== null ? 'choice' : 'repeat');
           const tooMany = history.moves >= MOVES_PER_TURN;
           if (tooMany) counters.turnEndedByLimit += 1;
