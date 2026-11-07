@@ -12,6 +12,7 @@
 //   --workers N     worker processes (default: logical cores - 1)
 //   --max-commands  a match is cut off (status "capped") after this many accepted commands (default 3000)
 //   --max-wall-sec  ... or after this wall time (default 900)
+//   --record-text   with --record: the decisions are also written out as words (text-<tag>.jsonl.gz: the prompt, the numbered candidates, the answers) for reading and auditing
 //   --shadow <cpu>  with --record: a teacher CPU (one that looks ahead) looks at every decision of the other CPUs and its answer is recorded, the CPU's own played (DAgger)
 //   --max-loop N    ... or when the same board with the same kind of window comes back N times in one turn, whoever acts (a loop between the two seats; default 30; cap "loop")
 //   --max-repeat N  ... or when the same command is accepted N times in a row in the same state (a loop; default 10; cap "repeat")
@@ -78,7 +79,7 @@ function gameRules(dir) {
   return { ruleVersion: /RULE_VERSION = '([^']+)'/.exec(versions)?.[1] ?? null, cardVersion: /CARD_VERSION = '([^']+)'/.exec(versions)?.[1] ?? null, firstTurnDraw };
 }
 const recordOut = typeof args.record === 'string'
-  ? { dir: path.resolve(args.record), header: oreHeader({ game: { commit: env.key.game.commit, variant: env.info.game?.variant ?? null }, rules: gameRules(gameDir), cpus: { a: cpuA, b: cpuB }, shadow: typeof args.shadow === 'string' ? args.shadow : null, envId: env.id }) }
+  ? { dir: path.resolve(args.record), text: Boolean(args['record-text']), header: oreHeader({ game: { commit: env.key.game.commit, variant: env.info.game?.variant ?? null }, rules: gameRules(gameDir), cpus: { a: cpuA, b: cpuB }, shadow: typeof args.shadow === 'string' ? args.shadow : null, envId: env.id }) }
   : null;
 
 // The table. A job id is a stable name: it is also the match id the game sees.

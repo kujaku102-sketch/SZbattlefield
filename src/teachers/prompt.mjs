@@ -14,6 +14,7 @@ const SYSTEM = [
   '与えられた番号つきの選択肢から、いまの局面で最もよい手を1つ選んでください。'
 ].join('\n');
 
+export const SYSTEM_PROMPT = SYSTEM;
 const FORMAT = '答えは次のJSONだけで返してください: {"choice": 選択肢の番号, "reason": "理由を一文で"}';
 
 const cardLine = (card) => {

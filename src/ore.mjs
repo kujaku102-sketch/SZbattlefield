@@ -19,6 +19,7 @@ import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { decisionFeatures, FEATURE_VERSION, STATE_NAMES, CAND_NAMES } from '../cpus/learned/features.mjs';
 import { actionSignature, buildCandidates, entryIndexOf } from '../cpus/learned/candidates.mjs';
+import { buildPrompt, PROMPT_VERSION, SYSTEM_PROMPT } from './teachers/prompt.mjs';
 
 export const ORE_SCHEMA = 1;
 const sig = (value) => (value === 0 ? 0 : Number(Number(value).toPrecision(4)));
@@ -29,9 +30,9 @@ export function oreHeader(extra = {}) {
 }
 
 // Appends one block (an array of JSON lines) to this process's file; the header goes first when the file is new.
-export function appendOreBlock(dir, tag, header, lines) {
+export function appendOreBlock(dir, tag, header, lines, prefix = 'ore') {
   mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `ore-${tag}.jsonl.gz`);
+  const file = path.join(dir, `${prefix}-${tag}.jsonl.gz`);
   if (!existsSync(file)) appendFileSync(file, gzipSync(`${JSON.stringify(header)}\n`));
   appendFileSync(file, gzipSync(`${lines.join('\n')}\n`));
 }
@@ -45,7 +46,8 @@ export function appendOreBlock(dir, tag, header, lines) {
 //   meta                  { job, seed, seat, rev, turn }       timing  ({ planMs, featureMs, candidates }) => void
 //   history               what the seat did earlier in this turn: { moves, used: Map } (cpus/learned/features.mjs)
 //   student               the action the seat really played, when the teacher only looked at the seat's decision (DAgger): its candidate is written as "sk"
-export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined, student = null }) {
+//   text                  an array to put the decision written out as words into (src/teachers/prompt.mjs): for reading and auditing, next to the record for learning
+export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined, student = null, text = null }) {
   if (query.requiredInput !== null) return null;
   const last = cpu.lastDecision ?? null;
   if (last?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(last.why)) return null;
@@ -72,8 +74,19 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
   }
   const eo = features.cands.map((_, i) => built.cands[i]?.entryIndex ?? -1);
   const ek = entryIndexOf(query, intent.value.action);
+  if (text) {
+    const p = buildPrompt(query, built.cands);
+    const nOf = (i) => (i !== null && i !== undefined && i >= 0 && i < built.cands.length ? i + 1 : null);
+    const skIndex = student?.ok ? index.get(actionSignature(student.value.action)) ?? null : undefined;
+    text.push(JSON.stringify({ id: `${meta.job}|${meta.seat}|${meta.rev}`, ...meta, prompt: p.user, candidates: p.candidates,
+      answers: { teacher: { n: nOf(k), baseline: k === built.cands.length, why, scores: built.cands.map((_, i) => t[i]) }, ...(skIndex !== undefined ? { student: { n: nOf(skIndex) } } : {}) } }));
+  }
   const extra = student?.ok ? { sk: index.get(actionSignature(student.value.action)) ?? (built.unsupported.length > 0 ? built.cands.length : null) } : {};
   return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek, ...extra });
+}
+
+export function textHeader(extra = {}) {
+  return { kind: 'forge-text', schema: 1, promptVersion: PROMPT_VERSION, system: SYSTEM_PROMPT, ...extra };
 }
 
 export function matchLine(result, decisionLines) {

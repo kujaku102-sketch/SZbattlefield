@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { loadSimHost } from './sim-host.mjs';
 import { loadCpu } from '../cpus/index.mjs';
-import { appendOreBlock, matchLine, recordDecision } from './ore.mjs';
+import { appendOreBlock, matchLine, recordDecision, textHeader } from './ore.mjs';
 import { actionSignature } from '../cpus/learned/candidates.mjs';
 
 const SEATS = ['seat-a', 'seat-b'];
@@ -59,6 +59,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
   const matchId = `bench:${job.id}`;
   const anomalies = [];
   const oreLines = oreOut ? [] : null;
+  const textLines = oreOut?.text ? [] : null;
   const note = (type, detail) => { if (anomalies.length < 20) anomalies.push({ type, ...detail }); };
   const started = process.hrtime.bigint();
   const result = {
@@ -147,7 +148,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           const raw = ports[actor].queryAction;
           const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: simView, baseline: () => baseline.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor }) });
           if (teacherIntent?.ok && !(teacher.lastDecision?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why))) {
-            const line = recordDecision({ query, queryAction: raw, sim: simView, cpu: teacher, intent: teacherIntent, student: intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null) });
+            const line = recordDecision({ query, queryAction: raw, sim: simView, cpu: teacher, intent: teacherIntent, student: intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null), text: textLines });
             if (line) oreLines.push(line);
             const type = teacherIntent.value.action.type; const same = actionSignature(teacherIntent.value.action) === actionSignature(intent.value.action);
             shadowStats.n += 1; if (same) shadowStats.agree += 1;
@@ -157,7 +158,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       }
       if (oreLines && cpus[actor].needsSim === true) {
         try {
-          const line = recordDecision({ query, queryAction: ports[actor].queryAction, sim: view.sim ?? null, cpu: cpus[actor], intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null),
+          const line = recordDecision({ query, queryAction: ports[actor].queryAction, sim: view.sim ?? null, cpu: cpus[actor], intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null), text: textLines,
             timing: ({ planCalls, planMs, featureMs, candidates }) => { (result.featureTiming ??= []).push([candidates, Math.round(planMs * 1000) / 1000, Math.round(featureMs * 1000) / 1000, planCalls]); } });
           if (line) oreLines.push(line);
         } catch (error) { note('record_error', { rev: status.revision, message: String(error?.message ?? error), stack: String(error?.stack ?? '').split(String.fromCharCode(10)).slice(0, 3).join(' | ') }); }
@@ -241,5 +242,6 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
   }
   result.wallMs = Math.round(ms(started));
   if (oreOut && oreLines) appendOreBlock(oreOut.dir, oreOut.tag, oreOut.header, [...oreLines, matchLine(result, oreLines)]);
+  if (oreOut && textLines) appendOreBlock(oreOut.dir, oreOut.tag, textHeader({ game: oreOut.header.game, rules: oreOut.header.rules, cpus: oreOut.header.cpus, shadow: oreOut.header.shadow ?? null }), [...textLines, matchLine(result, textLines)], 'text');
   return result;
 }
