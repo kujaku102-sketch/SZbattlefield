@@ -44,7 +44,8 @@ export function appendOreBlock(dir, tag, header, lines) {
 //   intent                what the teacher returned
 //   meta                  { job, seed, seat, rev, turn }       timing  ({ planMs, featureMs, candidates }) => void
 //   history               what the seat did earlier in this turn: { moves, used: Map } (cpus/learned/features.mjs)
-export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined }) {
+//   student               the action the seat really played, when the teacher only looked at the seat's decision (DAgger): its candidate is written as "sk"
+export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined, student = null }) {
   if (query.requiredInput !== null) return null;
   const last = cpu.lastDecision ?? null;
   if (last?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(last.why)) return null;
@@ -71,7 +72,8 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
   }
   const eo = features.cands.map((_, i) => built.cands[i]?.entryIndex ?? -1);
   const ek = entryIndexOf(query, intent.value.action);
-  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek });
+  const extra = student?.ok ? { sk: index.get(actionSignature(student.value.action)) ?? (built.unsupported.length > 0 ? built.cands.length : null) } : {};
+  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek, ...extra });
 }
 
 export function matchLine(result, decisionLines) {

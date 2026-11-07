@@ -12,7 +12,10 @@ process.on('message', async (message) => {
     'seat-b': (await loadCpu(job.cpus['seat-b'])).create(gameDir)
   };
   for (const seat of Object.keys(cpus)) cpus[seat] = await cpus[seat];
-  const result = await playGame({ gameDir, job, cpus, limits, record: record ? { ...record, tag: String(process.pid) } : null });
+  // a teacher that looks at the decisions of the other CPUs (--shadow <cpu>), a new one for every decision
+  const shadowCpu = limits.shadow ? await loadCpu(limits.shadow) : null;
+  const shadow = shadowCpu ? { create: () => shadowCpu.create(gameDir) } : null;
+  const result = await playGame({ gameDir, job, cpus, limits, record: record ? { ...record, tag: String(process.pid) } : null, shadow });
   process.send({ type: 'result', result });
 });
 process.on('disconnect', () => process.exit(0));

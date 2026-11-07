@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { loadSimHost } from './sim-host.mjs';
 import { loadCpu } from '../cpus/index.mjs';
 import { appendOreBlock, matchLine, recordDecision } from './ore.mjs';
+import { actionSignature } from '../cpus/learned/candidates.mjs';
 
 const SEATS = ['seat-a', 'seat-b'];
 const OPENING = new Set(['keepOpeningHand', 'openingMulligan']);
@@ -52,7 +53,8 @@ export async function startDeckIds(gameDir) { return (await loadGame(gameDir)).d
 //   seat-a plays deckA, seat-b plays deckB. Who moves first is decided by the game's own opening dice (the seed).
 // cpus: { 'seat-a': <created cpu>, 'seat-b': <created cpu> }
 // record: { dir, tag, header, check } to write what the CPUs with a sim decided (src/ore.mjs); null for no record
-export async function playGame({ gameDir, job, cpus, limits, record: oreOut = null }) {
+// shadow: { create() -> a CPU that looks ahead } to have a teacher look at the decisions of the other CPUs and write what it would have done (DAgger); needs record
+export async function playGame({ gameDir, job, cpus, limits, record: oreOut = null, shadow = null }) {
   const g = await loadGame(gameDir);
   const matchId = `bench:${job.id}`;
   const anomalies = [];
@@ -78,11 +80,12 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     const recorded = g.record.createMatchRecord(authority);
     if (!recorded.ok) { note('record_failed', { error: recorded.error }); return result; }
     const record = recorded.value;
-    const needsSim = SEATS.some((seat) => cpus[seat].needsSim === true);
+    const needsSim = SEATS.some((seat) => cpus[seat].needsSim === true) || Boolean(shadow);
     const needsBaseline = needsSim || SEATS.some((seat) => cpus[seat].needsBaseline === true);   // a CPU that falls back on the current CPU
     const host = needsSim ? await simHostFor(gameDir) : null;
     const baseline = needsBaseline ? await (await loadCpu('simple')).create(gameDir) : null;
     let idle = 0;
+    const shadowStats = { n: 0, agree: 0, byType: {} };
     const noop = { processes: 0, second: 0, third: 0, max: 0 };
     let noopTurn = null; let noopCounts = new Map();
     // what each seat has done earlier in its turn (its own accepted moves), for the features that need it
@@ -135,6 +138,22 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       if (!intent?.ok) {
         note('cpu_no_move', { seat: actor, revision: status.revision, code: intent?.error?.code ?? null });
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; } continue;
+      }
+      if (oreLines && shadow && cpus[actor].needsSim !== true && query.requiredInput === null) {
+        // the teacher looks at the decision this CPU has just made, on the same state; its answer is recorded, the CPU's is played
+        try {
+          const simView = host.open({ authority, seat: actor });
+          const teacher = shadow.create();
+          const raw = ports[actor].queryAction;
+          const teacherIntent = teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: simView, baseline: () => baseline.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor }) });
+          if (teacherIntent?.ok && !(teacher.lastDecision?.kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why))) {
+            const line = recordDecision({ query, queryAction: raw, sim: simView, cpu: teacher, intent: teacherIntent, student: intent, meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null) });
+            if (line) oreLines.push(line);
+            const type = teacherIntent.value.action.type; const same = actionSignature(teacherIntent.value.action) === actionSignature(intent.value.action);
+            shadowStats.n += 1; if (same) shadowStats.agree += 1;
+            const t = (shadowStats.byType[type] ??= [0, 0]); t[0] += 1; if (same) t[1] += 1;
+          }
+        } catch (error) { note('shadow_error', { rev: status.revision, message: String(error?.message ?? error), stack: String(error?.stack ?? '').split(String.fromCharCode(10)).slice(0, 3).join(' | ') }); }
       }
       if (oreLines && cpus[actor].needsSim === true) {
         try {
@@ -211,6 +230,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     result.hash = createHash('sha256').update(JSON.stringify([record.commands, outcome, result.turns])).digest('hex').slice(0, 16);
     if (finished) result.status = 'finished';
     if (limits.watchNoop) result.noop = noop;
+    if (shadow) result.shadow = shadowStats;
     const counters = Object.fromEntries(SEATS.filter((seat) => cpus[seat].counters).map((seat) => [seat, cpus[seat].counters]));
     if (Object.keys(counters).length > 0) result.cpuStats = counters;
     if (trace) result.trace = trace.result(authority.engineState.firstPlayer === 'player' ? 0 : 1);
