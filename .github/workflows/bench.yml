@@ -1,0 +1,85 @@
+# DRAFT. Not used yet: nothing has been pushed, and this workflow only runs when started by hand (workflow_dispatch).
+#
+# Plays one table of CPU-against-CPU matches split into shards, one shard per job, then joins the shards and reports.
+# Every shard must run in the same environment (node version, game commit, CPU versions): merge refuses otherwise.
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_commit:
+        description: 'Siege_Zeke_openbeta commit to test (full sha)'
+        required: true
+      cpu_a:
+        description: 'CPU A (name or path, optional ?key=value&...)'
+        default: simple
+      cpu_b:
+        description: 'CPU B'
+        default: simple
+      seeds:
+        description: 'seeds: a count (1..N) or a comma list'
+        default: '40'
+      shards:
+        description: 'number of shards (must match the matrix below)'
+        default: '4'
+      swap:
+        description: 'also play with the CPUs on the other seats (true/false)'
+        default: 'false'
+
+env:
+  NODE_VERSION: '24.19.0'   # exact: part of the environment key
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest          # 4 vCPU, 16 GB on public repositories
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]         # keep in sync with the `shards` input
+    steps:
+      - uses: actions/checkout@v4   # this repository
+      - uses: actions/checkout@v4   # the game, at the commit to test
+        with:
+          repository: kujaku102-sketch/Siege_Zeke_openbeta
+          ref: ${{ inputs.game_commit }}
+          path: game
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Play the shard
+        env:
+          GAME_DIR: ${{ github.workspace }}/game
+          GAME_COMMIT: ${{ inputs.game_commit }}
+        run: |
+          node src/run.mjs --a "${{ inputs.cpu_a }}" --b "${{ inputs.cpu_b }}" --seeds "${{ inputs.seeds }}" \
+            ${{ inputs.swap == 'true' && '--swap' || '' }} \
+            --shard "${{ matrix.shard }}/${{ inputs.shards }}" --workers 3 --out "out/shard-${{ matrix.shard }}-of-${{ inputs.shards }}"
+      - uses: actions/upload-artifact@v4
+        if: always()                # a stopped shard keeps what it finished; run it again to continue
+        with:
+          name: shard-${{ matrix.shard }}
+          path: out/
+          retention-days: 14
+
+  merge:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts/
+      - name: Join and report
+        run: |
+          node src/merge.mjs --out merged parts/shard-*/shard-*
+          node src/report.mjs merged
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merged
+          path: merged/
+          retention-days: 30

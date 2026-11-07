@@ -1,0 +1,16 @@
+# results and raw data of runs (they are made, not kept here)
+cpu-bench-out/
+out/
+results/
+shards/
+merged/
+*.jsonl
+raw.jsonl
+summary.json
+merge-report.json
+
+# local
+node_modules/
+.DS_Store
+*.log
+.env

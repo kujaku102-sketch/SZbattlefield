@@ -1,0 +1,16 @@
+{
+  "name": "szbattlefield",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "A bench for the CPU of Siege÷Zeke: plays fixed tables of CPU-against-CPU matches (split into shards, resumable, mergeable), measures strength and speed, and grows new CPUs.",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "run": "node src/run.mjs",
+    "merge": "node src/merge.mjs",
+    "report": "node src/report.mjs",
+    "compare": "node src/compare.mjs",
+    "determinism": "node src/determinism.mjs"
+  }
+}

@@ -1,0 +1,63 @@
+# SZbattlefield
+
+Siege÷Zeke の CPU を育てるための道具。CPU 同士を決まった表の通りに対戦させ、強さと速さを測り、新しい CPU を今の CPU と比べる。
+ゲーム本体（[Siege_Zeke_openbeta](https://github.com/kujaku102-sketch/Siege_Zeke_openbeta)）はこのリポジトリに含まない。コミットを指定して外から取ってきて、そのコミットを結果に書く。
+
+## 動かすのに要るもの
+- node 24 以上、git
+- ゲーム本体のコミット。次のどれかで渡す。
+  - `GAME_DIR=<パス>`: すでにあるチェックアウトをそのまま使う（GitHub Actions では、指定コミットを checkout した場所）
+  - `--commit <sha>`（または環境変数 `GAME_COMMIT`）: `GAME_SOURCE`（既定は公開リポジトリ）から clone して、そのコミットに合わせる
+  - どちらも無いとき: `GAME_REF`（既定 `main`）の先頭を取る
+  - 手元のリポジトリを使うときは `GAME_SOURCE=<パス>`。clone の置き場は `SZB_WORK`（既定はシステムの一時フォルダ）
+- ゲームのリポジトリには何も書き込まない（clone と checkout だけ）。
+
+## 使い方
+```
+node src/run.mjs --a simple --b simple --seeds 40 --workers 5 --out out/simple-simple
+node src/report.mjs out/simple-simple          # summary.md / summary.json
+```
+- `--a` / `--b`: CPU の指定。名前（`cpus/<名前>.mjs`）かファイルのパス。後ろに `?キー=値&…` を付けるとパラメータが CPU に渡る（重みの調整用）。A が seat-a、B が seat-b。`--swap` で席を入れ替えた分も回す（違う CPU 同士を比べるときは必須）。
+- 表は、スタートデッキ全部の総当たり（先手側デッキ × 後手側デッキ。同じデッキ同士も含む）× 固定シード。先手・後手はゲーム自身の開始ダイス（シードで決まる）で決まり、結果の `firstSeat` に残る。
+- 試合の打ち切り: 受理されたコマンド 3000 個、または 900 秒（`--max-commands` `--max-wall-sec`）。8 手続けて受理されなければ「止まった（stuck）」。
+- 同じシード・同じ CPU なら、何度回しても、どの機械で回しても同じ結果になる（`src/determinism.mjs`、`src/compare.mjs` で確かめられる）。
+
+## 分けて回す・続ける・合わせる
+```
+node src/run.mjs ... --shard 1/4 --out shards/1      # 表を 4 つに分けた 1 つ目だけ回す
+node src/run.mjs ... --shard 1/4 --out shards/1      # 止まったら同じコマンド。終わった試合は飛ばす
+node src/merge.mjs --out merged shards/1 shards/2 shards/3 shards/4
+node src/report.mjs merged
+```
+詳しくは [docs/sharding.md](docs/sharding.md)。
+
+## CPU の差し替え口
+CPU は `{ id, create(gameDir, params) -> { choose(view) }, versionFiles?(gameDir) }` を default export するモジュール（`cpus/simple.mjs` が見本）。
+`choose` に渡るのは `view` だけ。
+- `view.query`: その席から見える query（自分の手札は中身、相手の手札・山札は枚数だけ。UI がその席に見せるものと同じ）
+- `view.queryAction`: その席のポートで行動を組み立てる関数（他の席・authority・engine の状態には届かない）
+- `view.commandId` / `view.seatId`
+
+返すのは `{ ok: true, value: { commandId, expectedRevision, action } }` か `{ ok: false, error: { code } }`。
+CPU オブジェクトは試合ごと・席ごとに作り直す（試合をまたいだ状態は持ち越せない）。
+`versionFiles` は、そのモジュールの外にあって動きを決めるファイル（`simple` ならゲーム側の方針ファイル）。CPU の版はこれらのハッシュで決まる（改行コードは無視）。
+カード名・カード番号に結びついた処理は CPU に入れない。
+
+## 時間の測り方（1手 = CPU が選んだコマンド1個）
+- `choose` = CPU の呼び出し全体 = `own`（CPU 自身のコード）+ `planning`（CPU が呼んだゲームの `queryAction`。ランタイムの時間）
+- `query` = 手の前にその席が取る query、`submit` = コマンドの提出。どちらもランタイム側の時間
+- 並列で回した表の時間は他の処理と競合する。時間は 1 ワーカー・単独で回した結果を使う。別々の機械の結果を合わせた表の時間は意味がない。
+
+## 1手を試す時間
+`probe/probe.mjs` は、今の CPU が打った試合から局面を拾い、ランタイム（検証・射影）を通さずにエンジンで 1 手を試す時間を測る。
+見えない情報（相手の手札・自分の山札の並びなど）は、その席が見ているカードとデッキ表から作った山で埋め直した状態の上で試す。`probe/summarize.mjs` で集計する。
+
+## 置いてあるもの
+```
+src/      run（対戦表を回す）、play（1 試合）、worker、table（表と shard の分け方）、env（環境の記録）、
+          merge（結果をまとめる）、compare（2 つの結果の一致を見る）、report（集計）、determinism、game-dir（ゲームの取得）
+cpus/     CPU の差し替え口（index.mjs）と、今の CPU の見本（simple.mjs）
+probe/    1 手を試す時間の計測
+docs/     sharding.md
+.github/workflows/bench.yml   GitHub Actions の下書き（手動実行のみ。まだ使っていない）
+```
