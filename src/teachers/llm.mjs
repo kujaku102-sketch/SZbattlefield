@@ -10,7 +10,9 @@
 // The ledger (src/teachers/ledger.mjs) keeps a run under settings.maxUsd / maxCalls: when the next call could pass the limit it is not made (error kind "budget").
 //
 // settings: { transport: "direct"|"replay"|"dry", model, maxTokens, temperature, concurrency, maxUsd, maxCalls, pricePerMTok: { input, output, cacheRead?, cacheWrite? },
-//             responsesDir, ledgerFile, timeoutMs, endpoint, version }      (the API key is not a setting: src/teachers/secrets.mjs)
+//             responsesDir, ledgerFile, timeoutMs, endpoint, version }      (the API key is not a setting: src/teachers/secrets.mjs, FORGE_LLM_API_KEY only)
+// The address to send to is `endpoint` of the settings (the official API by default) and nothing else: no SDK, no environment variable or profile is looked at for it, and
+// every call written in the ledger carries the host it went to. An address that is not https is refused.
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -34,6 +36,7 @@ export function parseAnswer(text, nCandidates) {
 export function createLlmTeacher(settings, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   const s = { transport: 'dry', model: 'claude-haiku-5-5', maxTokens: 300, temperature: 0, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000,
     endpoint: 'https://api.anthropic.com/v1/messages', version: '2023-06-01', ...settings };
+  let endpointHost = null; try { const u = new URL(s.endpoint); endpointHost = u.protocol === 'https:' ? u.host : null; } catch { /* refused below */ }
   const params = { model: s.model, max_tokens: s.maxTokens, temperature: s.temperature };
   const stats = { decisions: 0, calls: 0, cached: 0, errors: {}, promptChars: 0, estimatedInputTokens: 0, maxUsd: 0, usd: 0, usage: { input_tokens: 0, output_tokens: 0 }, stopped: null };
   const ledger = s.ledgerFile ? openLedger(s.ledgerFile, { maxUsd: s.maxUsd, maxCalls: s.maxCalls }) : null;
@@ -44,8 +47,9 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
   const cacheFile = (key) => (s.responsesDir ? path.join(s.responsesDir, `${key}.json`) : null);
 
   async function callApi(request) {
+    if (!endpointHost) return { error: { kind: 'endpoint', message: 'the endpoint of the settings is not an https address' } };
     const apiKey = readApiKey(env);
-    if (!apiKey) return { error: { kind: 'no-key', message: 'no API key in the environment (FORGE_LLM_API_KEY / ANTHROPIC_API_KEY)' } };
+    if (!apiKey) return { error: { kind: 'no-key', message: 'no API key in the environment (FORGE_LLM_API_KEY)' } };
     const started = Date.now(); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), s.timeoutMs);
     try {
       const response = await fetchImpl(s.endpoint, { method: 'POST', signal: controller.signal,
@@ -81,12 +85,12 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     stats.calls += 1;
     if (result.error) {
       stats.errors[result.error.kind] = (stats.errors[result.error.kind] ?? 0) + 1;
-      ledger?.record({ id: request.id, usd: 0, model: s.model, error: result.error.kind, latencyMs: result.latencyMs });
+      ledger?.record({ id: request.id, usd: 0, model: s.model, endpoint: endpointHost, error: result.error.kind, latencyMs: result.latencyMs });
       return { ...base, choice: null, error: result.error, latencyMs: result.latencyMs };
     }
     const usd = priceOf(result.usage, s.pricePerMTok);
     stats.usd += usd; stats.usage.input_tokens += result.usage.input_tokens ?? 0; stats.usage.output_tokens += result.usage.output_tokens ?? 0;
-    ledger?.record({ id: request.id, usd, model: s.model, usage: result.usage, latencyMs: result.latencyMs });
+    ledger?.record({ id: request.id, usd, model: s.model, endpoint: endpointHost, usage: result.usage, latencyMs: result.latencyMs });
     if (file) writeFileSync(file, JSON.stringify({ raw: result.raw, usage: result.usage, latencyMs: result.latencyMs, model: s.model, params, at: new Date().toISOString() }));
     const parsed = parseAnswer(result.raw, request.candidates.length);
     if (parsed.error) stats.errors[parsed.error.kind] = (stats.errors[parsed.error.kind] ?? 0) + 1;

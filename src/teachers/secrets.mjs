@@ -1,11 +1,11 @@
-// The only place that reads a key. Keys come from the environment and nowhere else; they are not settings, not arguments, not part of any file this program writes.
+// The only place that reads a key. The key comes from the one environment variable FORGE_LLM_API_KEY and nowhere else (not ANTHROPIC_API_KEY, not ANTHROPIC_AUTH_TOKEN,
+// not a login profile, and the address to send to is not taken from ANTHROPIC_BASE_URL: it is in the settings); they are not settings, not arguments, not part of any file this program writes.
 // Everything that is written out (logs, errors, the ledger, the records) goes through `redact`, which replaces the value of every key-like environment variable by ***.
-const NAMES = ['FORGE_LLM_API_KEY', 'ANTHROPIC_API_KEY'];
+const NAME = 'FORGE_LLM_API_KEY';
 const KEY_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD)/i;
 
 export function readApiKey(env = process.env) {
-  for (const name of NAMES) if (typeof env[name] === 'string' && env[name].length > 0) return env[name];
-  return null;
+  return typeof env[NAME] === 'string' && env[NAME].length > 0 ? env[NAME] : null;
 }
 
 export const hasApiKey = (env = process.env) => readApiKey(env) !== null;
