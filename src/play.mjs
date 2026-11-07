@@ -9,6 +9,20 @@ import { appendOreBlock, matchLine, recordDecision } from './ore.mjs';
 
 const SEATS = ['seat-a', 'seat-b'];
 const OPENING = new Set(['keepOpeningHand', 'openingMulligan']);
+// What the board looks like, for telling a loop: both sides' STR and memory, every card of every zone with its sleep, damage and side, and the kind of window that is open
+// (not its ids: they change from one turn of the loop to the next). The same signature again and again in one turn is a loop.
+function boardSignature(state) {
+  const parts = [state.turnNumber, state.active, state.pending?.type ?? '', state.pending?.request?.continuation?.type ?? '', state.prompt?.type ?? ''];
+  for (const id of ['player', 'ai']) {
+    const p = state.players[id];
+    parts.push(p.fortressStr, p.memory, p.deck.length);
+    for (const zone of ['hand', 'front', 'back', 'registry', 'trash', 'ban']) {
+      parts.push(zone);
+      for (const c of p[zone]) parts.push(`${c.uid}${c.sleep ? 's' : ''}${c.damage ? `d${c.damage}` : ''}${c.faceDown ? 'f' : ''}${(c.mounted ?? []).length}`);
+    }
+  }
+  return createHash('md5').update(parts.join('|')).digest('hex');
+}
 const ms = (from) => Number(process.hrtime.bigint() - from) / 1e6;
 const round = (value) => Math.round(value * 100) / 100;
 
@@ -74,6 +88,8 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     // The same command in the same state, again and again, is a loop (a command can be accepted and change nothing). `maxRepeat` such commands in a
     // row end the match as capped (cap "repeat"). "The state" is what the two seats see (both queries' observations, without the revision).
     let repeat = { key: null, digest: null, count: 0 };
+    // The same board with the same kind of window, again and again in one turn, whoever acts (two seats can answer each other for ever): `maxLoop` such returns end the match as capped (cap "loop").
+    let loopTurn = null; let loopSeen = new Map();
     let finished = false;
     for (;;) {
       if (result.commands >= limits.maxCommands) { result.status = 'capped'; result.cap = `commands>=${limits.maxCommands}`; break; }
@@ -149,6 +165,13 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
         idle = 0; result.commands += 1;
         const key = `${actor}|${JSON.stringify(intent.value.action)}`;
         repeat = key === repeat.key && digest === repeat.digest ? { key, digest, count: repeat.count + 1 } : { key, digest, count: 1 };
+        {
+          const st = authority.engineState;
+          if (st.turnNumber !== loopTurn) { loopTurn = st.turnNumber; loopSeen = new Map(); }
+          const signature = boardSignature(st);
+          const seen = (loopSeen.get(signature) ?? 0) + 1; loopSeen.set(signature, seen);
+          if (limits.maxLoop && seen >= limits.maxLoop) { result.status = 'capped'; result.cap = `loop>=${limits.maxLoop}`; result.repeated = { seat: actor, action: intent.value.action?.type ?? null, turn: st.turnNumber }; break; }
+        }
         if (repeat.count >= limits.maxRepeat) { result.status = 'capped'; result.cap = `repeat>=${limits.maxRepeat}`; result.repeated = { seat: actor, action: intent.value.action?.type ?? null }; break; }
         if (result.firstSeat === null && !OPENING.has(intent.value.action.type)) result.firstSeat = actor;
       } else {

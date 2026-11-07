@@ -12,6 +12,7 @@
 //   --workers N     worker processes (default: logical cores - 1)
 //   --max-commands  a match is cut off (status "capped") after this many accepted commands (default 3000)
 //   --max-wall-sec  ... or after this wall time (default 900)
+//   --max-loop N    ... or when the same board with the same kind of window comes back N times in one turn, whoever acts (a loop between the two seats; default 30; cap "loop")
 //   --max-repeat N  ... or when the same command is accepted N times in a row in the same state (a loop; default 10; cap "repeat")
 //   --only <text>   only jobs whose id contains the text (for a re-run of one match)
 //   --sample N      only every k-th job so that about N matches are played (a fixed pick, for the determinism check)
@@ -51,7 +52,7 @@ const cpuB = args.b ?? 'simple';
 const shard = args.shard ? parseShard(args.shard) : null;
 const outDir = path.resolve(args.out ?? path.join('cpu-bench-out', `${cpuA.replace(/[^\w.-]+/g, '_')}-${cpuB.replace(/[^\w.-]+/g, '_')}`, ...(shard ? [`shard-${shard.index}-of-${shard.count}`] : [])));
 const workers = Number(args.workers ?? Math.max(1, os.cpus().length - 1));
-const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), ...(args.trace ? { trace: true } : {}) };
+const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(args.trace ? { trace: true } : {}) };
 const seeds = String(args.seeds ?? '10').includes(',') ? String(args.seeds).split(',').map(Number)
   : Array.from({ length: Number(args.seeds ?? 10) }, (_, index) => index + 1);
 
