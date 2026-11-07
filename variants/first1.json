@@ -1,0 +1,11 @@
+{
+  "id": "first1",
+  "description": "Only the first player's first-turn draw changes: 1 card instead of none (the second player still draws 2).",
+  "edits": [
+    {
+      "file": "src/game/core/turn.js",
+      "find": "  if (player.turnsTaken === 0 && playerId === state.firstPlayer) drawCount = 0;\n",
+      "replace": "  if (player.turnsTaken === 0 && playerId === state.firstPlayer) drawCount = 1;\n"
+    }
+  ]
+}
