@@ -13,6 +13,8 @@
 //          counts the model's thinking tokens too); every ledger line says which row it used (priceVersion). `pricePerMTok: { input, output }` is the same for all days.
 // retries: how many times a call that was answered 429 (rate limit) or 5xx is made again, after waiting (the Retry-After of the answer, else 2, 4, 8, 16 s ...); such a call costs nothing and is not in the ledger
 // thinkingBudget (gemini): thinking tokens the model may spend before it answers; they are part of maxTokens
+// effort, thinking (anthropic): sent as output_config.effort and thinking. The Claude 5 models think by default and the thinking tokens come out of maxTokens: an answer cut off
+//          before its text has the kind "parse" (and an empty text is not kept in the responses folder). Give maxTokens room, and lower the effort.
 // provider: "anthropic" (default) or "gemini": the same prompt, the answer read the same; only the request and the reading of the reply differ (below). The key is FORGE_LLM_API_KEY for both.
 // set: the name of one run of a set of questions; the ledger of the set is ledgerDir/<set>.jsonl, and maxUsd / maxCalls count that file only, so every set has its own limit
 // scope: { types: ["install", "executeCard"], noGain: true } which decisions the harness asks about at all (see inScope)
@@ -66,7 +68,7 @@ const ENDPOINTS = {
 // each provider: how the request is made, how the reply is read -> { text, usage: { input_tokens, output_tokens }, stopReason }
 const PROVIDERS = {
   anthropic: {
-    request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': s.version }, body: { ...params, system: prompt.system, messages: [{ role: 'user', content: prompt.user }] } }),
+    request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': s.version }, body: { ...params, system: prompt.system, messages: [{ role: 'user', content: prompt.user }], ...(s.effort ? { output_config: { effort: s.effort } } : {}), ...(s.thinking ? { thinking: s.thinking } : {}) } }),
     read: (data) => ({ text: (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''), usage: data.usage ?? {}, stopReason: data.stop_reason ?? null })
   },
   gemini: {
@@ -79,7 +81,7 @@ const PROVIDERS = {
 
 // `ledger`: a ledger the caller opened and shares between several models (src/teachers/panel.mjs); without it the settings' own ledgerFile is opened
 export function createLlmTeacher(settings, { env = process.env, fetchImpl = globalThis.fetch, ledger: sharedLedger = null } = {}) {
-  const s = { transport: 'dry', provider: 'anthropic', model: 'claude-haiku-5-5', maxTokens: 300, temperature: 0, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000, retries: 4,
+  const s = { transport: 'dry', provider: 'anthropic', model: 'claude-haiku-5-5', maxTokens: 300, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000, retries: 4,
     version: '2023-06-01', ...settings };
   if (!PROVIDERS[s.provider]) throw new Error(`provider ${s.provider}? one of ${Object.keys(PROVIDERS).join(', ')}`);
   keyEnvOf(s.provider, s.keyEnv);
@@ -118,7 +120,7 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
 
   // request -> DecisionAnswer: { id, choice, reason, raw, model, params, usage, usd, latencyMs, cached, error }
   async function ask(request) {
-    const key = hashOf({ params, system: request.prompt.system, user: request.prompt.user });
+    const key = hashOf({ params, ...(s.effort || s.thinking ? { extra: { effort: s.effort, thinking: s.thinking } } : {}), system: request.prompt.system, user: request.prompt.user });
     const file = cacheFile(key);
     stats.decisions += 1; stats.promptChars += request.prompt.system.length + request.prompt.user.length;
     const price = priceNow();
@@ -151,7 +153,7 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     const usd = priceOf(result.usage, price);
     stats.usd += usd; stats.usage.input_tokens += result.usage.input_tokens ?? 0; stats.usage.output_tokens += result.usage.output_tokens ?? 0;
     ledger?.record({ id: request.id, usd, model: s.model, provider: s.provider, set: s.set ?? null, endpoint: endpointHost, priceVersion: price.version, usage: result.usage, latencyMs: result.latencyMs });
-    if (file) writeFileSync(file, JSON.stringify({ raw: result.raw, usage: result.usage, latencyMs: result.latencyMs, model: s.model, params, at: new Date().toISOString() }));
+    if (file && result.raw) writeFileSync(file, JSON.stringify({ raw: result.raw, usage: result.usage, latencyMs: result.latencyMs, model: s.model, params, at: new Date().toISOString() }));
     const parsed = parseAnswer(result.raw, request.candidates.length);
     if (parsed.error) stats.errors[parsed.error.kind] = (stats.errors[parsed.error.kind] ?? 0) + 1;
     return { ...base, ...parsed, raw: result.raw, usage: result.usage, usd, latencyMs: result.latencyMs, cached: false };
