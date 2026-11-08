@@ -4,6 +4,8 @@
 // value = w.str * (my fortress STR - theirs) + w.board * (my board - theirs) + w.ready * (my ready attackers - theirs)
 //       + w.hand * (my hand - theirs) + w.registry * (my registry - theirs) + w.back * (my set cards - theirs) + w.memory * (my memory - theirs)
 // and +/- a very large number when the game is decided.
+// Two terms are not differences, and are 0 unless a persona (cpus/personas/) sets them: ownStr * (my fortress STR) keeps one's own STR dear, oppBoard * (their board) is an extra
+// weight on taking down the other side's board.
 
 export const DEFAULT_WEIGHTS = Object.freeze({ str: 3, board: 1, ready: 1.5, hand: 0.7, registry: 1, back: 0.5, memory: 0.1, hp: 0.6 });
 
@@ -27,6 +29,6 @@ export function evaluate(state, me, w = DEFAULT_WEIGHTS) {
   if (state.winner === me) return 1e6;
   if (state.winner === opp) return -1e6;
   const a = side(state.players[me], w); const b = side(state.players[opp], w);
-  return w.str * (a.str - b.str) + w.board * (a.board - b.board) + w.ready * (a.ready - b.ready)
+  return (w.ownStr ?? 0) * a.str - (w.oppBoard ?? 0) * b.board + w.str * (a.str - b.str) + w.board * (a.board - b.board) + w.ready * (a.ready - b.ready)
     + w.hand * (a.hand - b.hand) + w.registry * (a.registry - b.registry) + w.back * (a.back - b.back) + w.memory * (a.memory - b.memory);
 }

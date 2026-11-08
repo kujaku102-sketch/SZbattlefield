@@ -1,5 +1,6 @@
 // Plays one match between two CPUs through the same local runtime port the game's own AI match uses, and measures it.
 import { createTrace } from './trace.mjs';
+import { createStyle } from './style.mjs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -94,6 +95,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     const histories = { 'seat-a': { turn: null, moves: 0, used: new Map() }, 'seat-b': { turn: null, moves: 0, used: new Map() } };
     const historyOf = (seat, turnNumber) => { const h = histories[seat]; if (h.turn !== turnNumber) { h.turn = turnNumber; h.moves = 0; h.used = new Map(); } return h; };
     const trace = limits.trace ? createTrace() : null;
+    const style = limits.style ? createStyle() : null;     // how each seat played, counted from the real match (src/style.mjs)
     let commandNumber = 0;
     // The same command in the same state, again and again, is a loop (a command can be accepted and change nothing). `maxRepeat` such commands in a
     // row end the match as capped (cap "repeat"). "The state" is what the two seats see (both queries' observations, without the revision).
@@ -200,6 +202,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       result.choose.push(round(chooseMs)); result.planning.push(round(planning)); result.queryMs.push(round(queryMs));
       const ts = process.hrtime.bigint();
       trace?.before(authority.engineState);
+      style?.before(authority.engineState, SEATS.indexOf(actor), intent.value?.action);
       const sigBefore = limits.watchNoop ? boardSignature(authority.engineState, false) : null;
       let submitted;
       try {
@@ -213,6 +216,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           record.commands.push({ seat: actor, action: encoded.value, ...(card ? { card } : {}) });
           authority = submitted.value.authority;
           trace?.after(authority.engineState, SEATS.indexOf(actor));
+          style?.after(authority.engineState);
         }
       }
       catch (error) {
@@ -262,6 +266,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     const outcome = locked === null ? null : locked === 'draw' ? { kind: 'draw' } : { kind: 'win', winnerSeat: authority.metadata.seatIds[locked === 'player' ? 0 : 1] };
     result.turns = authority.engineState.turnNumber;
     result.outcome = outcome;
+    if (style) result.style = style.summary();
     result.hash = createHash('sha256').update(JSON.stringify([record.commands, outcome, result.turns])).digest('hex').slice(0, 16);
     if (finished) result.status = 'finished';
     if (limits.watchNoop) result.noop = noop;

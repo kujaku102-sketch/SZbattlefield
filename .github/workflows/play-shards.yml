@@ -47,6 +47,11 @@ on:
       shards:
         description: 'the shards to play here, a comma list of at most 8 (e.g. 3,4,5,6)'
         required: true
+      style:
+        description: 'count how each seat played (attacks at the user, trades, hand/registry/board at the end of its turns, memory left): result.style'
+        type: choice
+        options: ['true', 'false']
+        default: 'true'
       cpu_file:
         description: 'optional: the name of the forged CPU file that cpu_gz_b64 holds (forged-<name>.mjs)'
         default: ''
@@ -94,9 +99,9 @@ jobs:
         run: |
           [[ "$GAME_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "game_commit must be a full sha"; exit 1; }
           [[ "$TABLE" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "table: letters, digits, - and _"; exit 1; }
-          for c in "$CPU_A" "$CPU_B"; do [[ "$c" =~ ^[A-Za-z0-9_-]+$ || "$c" =~ ^cpus/forged-[A-Za-z0-9_-]+\.mjs$ ]] || { echo "cpu: a name or cpus/forged-<name>.mjs"; exit 1; }; done
+          for c in "$CPU_A" "$CPU_B"; do [[ "$c" =~ ^[A-Za-z0-9_-]+(\?persona=[a-z0-9_-]+)?$ || "$c" =~ ^cpus/forged-[A-Za-z0-9_-]+\.mjs$ ]] || { echo "cpu: a name (optionally ?persona=<name>) or cpus/forged-<name>.mjs"; exit 1; }; done
           [[ "$SEEDS" =~ ^[0-9]+(,[0-9]+)*,?$ && "$SEEDS" == *,* ]] || { echo "seeds: a comma list (a single seed: 301,)"; exit 1; }
-          [[ -z "$SHADOW" || "$SHADOW" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "shadow: a CPU name"; exit 1; }
+          [[ -z "$SHADOW" || "$SHADOW" =~ ^[A-Za-z0-9_-]+(\?persona=[a-z0-9_-]+)?$ ]] || { echo "shadow: a CPU name (optionally ?persona=<name>)"; exit 1; }
           [[ "$TOTAL" =~ ^[0-9]+$ && "$TOTAL" -ge 1 && "$TOTAL" -le 64 ]] || { echo "shard_total: 1..64"; exit 1; }
           [[ "$SHARDS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "shards: a comma list"; exit 1; }
           n=$(echo "$SHARDS" | tr ',' '\n' | wc -l); [ "$n" -le 8 ] || { echo "at most 8 shards in one start"; exit 1; }
@@ -152,6 +157,7 @@ jobs:
           SWAP: ${{ inputs.swap }}
           SHADOW: ${{ inputs.shadow }}
           RECORD: ${{ inputs.record }}
+          STYLE: ${{ inputs.style }}
           TOTAL: ${{ inputs.shard_total }}
           SHARD: ${{ matrix.shard }}
         run: |
@@ -159,6 +165,7 @@ jobs:
           [ "$SWAP" = "true" ] && extra+=(--swap)
           [ -n "$SHADOW" ] && extra+=(--shadow "$SHADOW")
           [ "$RECORD" = "true" ] && extra+=(--record "out/$TABLE/ore")
+          [ "$STYLE" = "true" ] && extra+=(--style)
           node src/run.mjs --a "$CPU_A" --b "$CPU_B" --seeds "$SEEDS" "${extra[@]}" --shard "$SHARD/$TOTAL" --workers 3 --max-matches 1500 \
             --out "out/$TABLE/shard-$SHARD-of-$TOTAL"
       - uses: actions/upload-artifact@v7

@@ -38,6 +38,9 @@ on:
       base_ore_run:
         description: 'optional: the run id of an earlier run whose joined records (artifact bundle-ore) are learned from too'
         default: ''
+      persona:
+        description: 'the persona of the teacher that makes the records (a file name of cpus/personas/, e.g. control; empty = the default evaluation). One persona to a run.'
+        default: ''
       run_llm:
         description: 'the language model job (needs repository secrets; leave false until they are set)'
         type: choice
@@ -73,7 +76,9 @@ jobs:
           EL: ${{ inputs.eval_seeds_lookahead }}
           HAMMER: ${{ inputs.hammer_args }}
           BASE: ${{ inputs.base_ore_run }}
+          PERSONA: ${{ inputs.persona }}
         run: |
+          [[ -z "$PERSONA" || "$PERSONA" =~ ^[a-z0-9_-]+$ ]] || { echo "persona: a name of a file of cpus/personas/ (lowercase letters, digits, - and _)"; exit 1; }
           [[ "$GAME_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "game_commit must be a full sha"; exit 1; }
           [[ "$FORGEHAMMER_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "forgehammer_commit must be a full sha"; exit 1; }
           [[ "$ROUND" =~ ^[0-9]+$ ]] || { echo "round: a number"; exit 1; }
@@ -115,9 +120,11 @@ jobs:
           SEEDS: ${{ inputs.record_seeds }}
           TABLE: ${{ matrix.table }}
           SHARD: ${{ matrix.shard }}
+          PERSONA: ${{ inputs.persona }}
         run: |
-          if [ "$TABLE" = "ll" ]; then b=lookahead; swap=(); else b=simple; swap=(--swap); fi
-          node src/run.mjs --a lookahead --b "$b" --seeds "$SEEDS" "${swap[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 \
+          teacher="lookahead${PERSONA:+?persona=$PERSONA}"       # the teacher plays with the persona's evaluation
+          if [ "$TABLE" = "ll" ]; then b="$teacher"; swap=(); else b=simple; swap=(--swap); fi
+          node src/run.mjs --a "$teacher" --b "$b" --seeds "$SEEDS" "${swap[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
             --record "out/ore-$TABLE" --out "out/run-$TABLE-$SHARD"
       - uses: actions/upload-artifact@v7
         if: always()                # a stopped shard keeps what it finished; run it again to continue
@@ -250,7 +257,7 @@ jobs:
           node forgehammer/packages/forge/bin/forge.mjs bundle verify in/weights
           cp "in/weights/forged-loop${ROUND}.mjs" "cpus/forged-loop${ROUND}.mjs"
           if [ "$TABLE" = "vs-simple" ]; then b=simple; seeds="$SEEDS_SIMPLE"; else b=lookahead; seeds="$SEEDS_LOOKAHEAD"; fi
-          node src/run.mjs --a "cpus/forged-loop${ROUND}.mjs" --b "$b" --seeds "$seeds" --swap --shard "$SHARD/4" --workers 3 --max-matches 1500 \
+          node src/run.mjs --a "cpus/forged-loop${ROUND}.mjs" --b "$b" --seeds "$seeds" --swap --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
             --out "out/$TABLE/shard-$SHARD-of-4"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -290,6 +297,8 @@ jobs:
           node forgehammer/packages/forge/bin/forge.mjs bundle pack bundle-eval --kind eval --round "$ROUND"
           node forgehammer/packages/forge/bin/forge.mjs bundle verify bundle-eval
           cat bundle-eval/vs-simple/arena.md bundle-eval/vs-lookahead/arena.md >> "$GITHUB_STEP_SUMMARY"
+          # how the CPU played (whether the persona shows): the share of attacks at the user, trades, what it holds at the end of its turns, the length of its matches
+          node src/style-report.mjs bundle-eval/vs-simple bundle-eval/vs-lookahead | tee bundle-eval/style.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

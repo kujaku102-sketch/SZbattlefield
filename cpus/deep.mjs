@@ -11,6 +11,7 @@
 // own / opp = the most moves played for each side after the move, margin = the least gain worth a move.
 // This file may import only files of this folder (checked when it is loaded).
 import { evaluate, DEFAULT_WEIGHTS } from './lookahead/eval.mjs';
+import { weightsFor } from './personas/index.mjs';
 import { playout } from './lookahead/playout.mjs';
 import { createLoopGuard } from './learned/loopguard.mjs';
 
@@ -26,7 +27,7 @@ export default {
     const ownDepth = Math.max(0, Number(params.own ?? 4));
     const oppDepth = Math.max(0, Number(params.opp ?? 4));
     const margin = Number(params.margin ?? 0.01);
-    const weights = { ...DEFAULT_WEIGHTS };
+    const weights = { ...DEFAULT_WEIGHTS, ...(params.persona ? weightsFor(params.persona) : {}) };
     for (const [key, value] of Object.entries(params)) if (key.startsWith('w_') && Number.isFinite(Number(value))) weights[key.slice(2)] = Number(value);
     let last = { revision: -1, id: -1 };
     let turn = null;

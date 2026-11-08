@@ -14,6 +14,7 @@
 // w_* = weights of the evaluation (cpus/lookahead/eval.mjs), guard=1 with budget=<ms> = hand the move to the current CPU when the thinking
 // runs over the time (off by default: a decision must not depend on how fast the machine is).
 import { evaluate, DEFAULT_WEIGHTS } from './lookahead/eval.mjs';
+import { weightsFor } from './personas/index.mjs';
 import { createLoopGuard } from './learned/loopguard.mjs';
 
 // What the seat sees, without the revision: if it is the same after a move, the move changed nothing.
@@ -29,7 +30,7 @@ export default {
     const guard = Number(params.guard ?? 0) === 1;
     const budget = Number(params.budget ?? 30);
     const margin = Number(params.margin ?? 0.01);
-    const weights = { ...DEFAULT_WEIGHTS };
+    const weights = { ...DEFAULT_WEIGHTS, ...(params.persona ? weightsFor(params.persona) : {}) };
     for (const [key, value] of Object.entries(params)) if (key.startsWith('w_') && Number.isFinite(Number(value))) weights[key.slice(2)] = Number(value);
     let last = { revision: -1, id: -1 };
     let turn = null;                 // the turn the no-effect memory belongs to

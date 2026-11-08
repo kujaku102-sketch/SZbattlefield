@@ -1,0 +1,7 @@
+{
+  "name": "beatdown",
+  "jp": "好戦的ビートダウン",
+  "note": "The default evaluation (the weights lookahead and deep have always used): the fortress STR difference and the cards ready to attack count most. gen1 and gen2 were learned from teachers with these.",
+  "weights": { "str": 3, "board": 1, "ready": 1.5, "hand": 0.7, "registry": 1, "back": 0.5, "memory": 0.1, "hp": 0.6 },
+  "colorAdjust": {}
+}
