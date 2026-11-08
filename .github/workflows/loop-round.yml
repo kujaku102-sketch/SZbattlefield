@@ -32,6 +32,15 @@ on:
       eval_seeds_lookahead:
         description: 'seeds of the evaluation against lookahead (comma list)'
         default: '1,2,3,4,5'
+      eval_seeds_beatzig:
+        description: 'seeds of the evaluation against beatZIG gen2 (comma list)'
+        default: '1,2'
+      student_run:
+        description: 'optional: the run id of an earlier run whose student (artifact bundle-weights) plays the records, the teacher answering every decision it makes (DAgger); empty = the teacher plays'
+        default: ''
+      student_round:
+        description: 'with student_run: the round number of that run (its file is cpus/forged-loop<round>.mjs)'
+        default: ''
       hammer_args:
         description: 'options of `forge hammer` (letters, digits, - and space only)'
         default: '--why all --advantage value --epochs 30'
@@ -81,13 +90,17 @@ jobs:
           BASE: ${{ inputs.base_ore_run }}
           PERSONA: ${{ inputs.persona }}
           DECKS: ${{ inputs.decks }}
+          EB: ${{ inputs.eval_seeds_beatzig }}
+          STUDENT_RUN: ${{ inputs.student_run }}
+          STUDENT_ROUND: ${{ inputs.student_round }}
         run: |
+          [[ -z "$STUDENT_RUN" || ( "$STUDENT_RUN" =~ ^[0-9]+$ && "$STUDENT_ROUND" =~ ^[0-9]+$ ) ]] || { echo "student_run: a run id, and student_round: its round number"; exit 1; }
           [[ -z "$DECKS" || "$DECKS" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(@[a-z][a-z0-9_]*)?(,[A-Za-z0-9][A-Za-z0-9_-]*(@[a-z][a-z0-9_]*)?)*$ ]] || { echo "decks: a comma list of decks: a name (letters, digits, - and _), optionally @user (start-red@bigboss)"; exit 1; }
           [[ -z "$PERSONA" || "$PERSONA" =~ ^[a-z0-9_-]+$ ]] || { echo "persona: a name of a file of cpus/personas/ (lowercase letters, digits, - and _)"; exit 1; }
           [[ "$GAME_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "game_commit must be a full sha"; exit 1; }
           [[ "$FORGEHAMMER_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "forgehammer_commit must be a full sha"; exit 1; }
           [[ "$ROUND" =~ ^[0-9]+$ ]] || { echo "round: a number"; exit 1; }
-          for s in "$REC" "$ES" "$EL"; do [[ "$s" =~ ^[0-9]+(,[0-9]+)*,?$ ]] || { echo "seeds: a comma list of numbers"; exit 1; }; done
+          for s in "$REC" "$ES" "$EL" "$EB"; do [[ "$s" =~ ^[0-9]+(,[0-9]+)*,?$ ]] || { echo "seeds: a comma list of numbers"; exit 1; }; done
           [[ "$HAMMER" =~ ^[-A-Za-z0-9\ ._]*$ ]] || { echo "hammer_args: letters, digits, - . _ and space only"; exit 1; }
           [[ -z "$BASE" || "$BASE" =~ ^[0-9]+$ ]] || { echo "base_ore_run: a run id"; exit 1; }
           since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
@@ -103,10 +116,13 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04           # 4 vCPU, 16 GB on public repositories. Pinned, not ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read                 # to take the student of an earlier run (student_run)
     strategy:
       fail-fast: false
       matrix:                       # 2 tables x 4 shards = 8 jobs
-        table: [ll, ls]             # ll: lookahead against lookahead;  ls: lookahead against simple (both seat orders)
+        table: [ll, ls]             # the teacher plays: ll: lookahead against lookahead;  ls: lookahead against simple (both seat orders).  With student_run: the student plays, ll against the teacher, ls against simple
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
@@ -118,6 +134,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: The student of an earlier run (if one was named)
+        if: ${{ inputs.student_run != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: bundle-weights
+          run-id: ${{ inputs.student_run }}
+          github-token: ${{ github.token }}
+          path: in/student
       - name: Play and record the shard
         env:
           GAME_DIR: ${{ github.workspace }}/game
@@ -127,12 +151,23 @@ jobs:
           SHARD: ${{ matrix.shard }}
           PERSONA: ${{ inputs.persona }}
           DECKS: ${{ inputs.decks }}
+          STUDENT_RUN: ${{ inputs.student_run }}
+          STUDENT_ROUND: ${{ inputs.student_round }}
         run: |
           decks=(); [ -n "$DECKS" ] && decks=(--decks "$DECKS")
           teacher="lookahead${PERSONA:+?persona=$PERSONA}"       # the teacher plays with the persona's evaluation
-          if [ "$TABLE" = "ll" ]; then b="$teacher"; swap=(); else b=simple; swap=(--swap); fi
-          node src/run.mjs --a "$teacher" --b "$b" --seeds "$SEEDS" "${swap[@]}" "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
-            --record "out/ore-$TABLE" --out "out/run-$TABLE-$SHARD"
+          if [ -n "$STUDENT_RUN" ]; then
+            # DAgger: the student of the earlier run plays, the teacher looks at every decision the student makes and writes what it would have done
+            student="cpus/forged-loop$STUDENT_ROUND.mjs"
+            cp "in/student/forged-loop$STUDENT_ROUND.mjs" "$student"
+            if [ "$TABLE" = "ll" ]; then b="$teacher"; else b=simple; fi
+            node src/run.mjs --a "$student" --b "$b" --seeds "$SEEDS" --swap "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
+              --shadow "$teacher" --record "out/ore-$TABLE" --out "out/run-$TABLE-$SHARD"
+          else
+            if [ "$TABLE" = "ll" ]; then b="$teacher"; swap=(); else b=simple; swap=(--swap); fi
+            node src/run.mjs --a "$teacher" --b "$b" --seeds "$SEEDS" "${swap[@]}" "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
+              --record "out/ore-$TABLE" --out "out/run-$TABLE-$SHARD"
+          fi
       - uses: actions/upload-artifact@v7
         if: always()                # a stopped shard keeps what it finished; run it again to continue
         with:
@@ -167,6 +202,8 @@ jobs:
           $forge info bundle-ore
           $forge bundle pack bundle-ore --kind ore --round "$ROUND"
           $forge bundle verify bundle-ore
+          # how the CPUs played in the records (the teacher's own style is the one the student is to be compared with)
+          { echo "## how the CPUs played in the records"; node src/style-report.mjs parts/record-ll-*/run-ll-* parts/record-ls-*/run-ls-*; } | tee -a "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v7
         with:
           name: bundle-ore
@@ -229,9 +266,9 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:                       # 2 tables x 4 shards = 8 jobs
-        table: [vs-simple, vs-lookahead]
-        shard: [1, 2, 3, 4]
+      matrix:                       # 3 tables x 2 shards = 6 jobs
+        table: [vs-simple, vs-lookahead, vs-beatzig]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/checkout@v7
@@ -260,13 +297,18 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SEEDS_SIMPLE: ${{ inputs.eval_seeds_simple }}
           SEEDS_LOOKAHEAD: ${{ inputs.eval_seeds_lookahead }}
+          SEEDS_BEATZIG: ${{ inputs.eval_seeds_beatzig }}
           DECKS: ${{ inputs.decks }}
         run: |
           decks=(); [ -n "$DECKS" ] && decks=(--decks "$DECKS")
           node forgehammer/packages/forge/bin/forge.mjs bundle verify in/weights
           cp "in/weights/forged-loop${ROUND}.mjs" "cpus/forged-loop${ROUND}.mjs"
-          if [ "$TABLE" = "vs-simple" ]; then b=simple; seeds="$SEEDS_SIMPLE"; else b=lookahead; seeds="$SEEDS_LOOKAHEAD"; fi
-          node src/run.mjs --a "cpus/forged-loop${ROUND}.mjs" --b "$b" --seeds "$seeds" --swap "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
+          case "$TABLE" in
+            vs-simple) b=simple; seeds="$SEEDS_SIMPLE" ;;
+            vs-lookahead) b=lookahead; seeds="$SEEDS_LOOKAHEAD" ;;
+            *) b=cpus/release/gen2/beatZIG.mjs; seeds="$SEEDS_BEATZIG" ;;       # beatZIG gen2, the released generation 2
+          esac
+          node src/run.mjs --a "cpus/forged-loop${ROUND}.mjs" --b "$b" --seeds "$seeds" --swap "${decks[@]}" --shard "$SHARD/2" --workers 3 --max-matches 1500 --style \
             --out "out/$TABLE/shard-$SHARD-of-4"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -299,15 +341,15 @@ jobs:
           ROUND: ${{ inputs.round }}
         run: |
           mkdir -p bundle-eval
-          for table in vs-simple vs-lookahead; do
+          for table in vs-simple vs-lookahead vs-beatzig; do
             node src/merge.mjs --out "bundle-eval/$table" parts/eval-$table-*/$table/shard-*
             node src/arena.mjs "bundle-eval/$table"
           done
           node forgehammer/packages/forge/bin/forge.mjs bundle pack bundle-eval --kind eval --round "$ROUND"
           node forgehammer/packages/forge/bin/forge.mjs bundle verify bundle-eval
-          cat bundle-eval/vs-simple/arena.md bundle-eval/vs-lookahead/arena.md >> "$GITHUB_STEP_SUMMARY"
+          cat bundle-eval/vs-simple/arena.md bundle-eval/vs-lookahead/arena.md bundle-eval/vs-beatzig/arena.md >> "$GITHUB_STEP_SUMMARY"
           # how the CPU played (whether the persona shows): the share of attacks at the user, trades, what it holds at the end of its turns, the length of its matches
-          node src/style-report.mjs bundle-eval/vs-simple bundle-eval/vs-lookahead | tee bundle-eval/style.md >> "$GITHUB_STEP_SUMMARY"
+          node src/style-report.mjs bundle-eval/vs-simple bundle-eval/vs-lookahead bundle-eval/vs-beatzig | tee bundle-eval/style.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

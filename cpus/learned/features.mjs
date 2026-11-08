@@ -15,7 +15,8 @@
 // `history` is what the seat itself has done earlier in this turn: { moves, used: Map(`${type}:${cardRef}` -> times) }. It is the seat's own record of its own
 // accepted moves, not something read from the game. `entries` are the same features for the legal actions before their options are known (one per entry of
 // query.legalActions, in order): a CPU that picks the entry first and only then asks for its options scores those.
-export const FEATURE_VERSION = 4;   // 4: what a card's text does (fx_*), after the first 3's features: a CPU made for 3 still reads its (shorter) list
+export const FEATURE_VERSION = 5;   // 4: what a card's text does (fx_*), after the first 3's features: a CPU made for 3 still reads its (shorter) list
+                                    // 5: the user cards of both seats (the numbers and the ability that the observation shows of each), after the 30 state features: a network made for 4 reads the first 30
 
 const KW = ['QA', 'SECURITY', 'CONTACT', 'HACKING', 'ENCRYPTION', 'PROTECT', 'BACKUP', 'LOGIN', 'LOGOUT', 'RESIDENT', 'UPDATE', 'RESPONSE', 'PROXY', 'DECOY'];
 const TYPES = ['install', 'recoverRegistry', 'activateScript', 'activateAbility', 'endTurn', 'attack', 'executeCard', 'setScript', 'redeploy', 'executeSpell', 'activateCardEffect', 'other'];
@@ -39,11 +40,18 @@ function fxOf(text) {
 }
 const PLACING = new Set(['executeCard', 'setScript', 'redeploy', 'install']);
 
+// v5: the user card of each seat (public: the observation shows both). The numbers (max STR, memory, opening hand, front and back limits, how many incidents and the first threshold) and the ability
+// (one of the nine the game has), for me and for the opponent.
+const USER_ABILITIES = Object.freeze(['turbo', 'mono_color', 'registry_liberty', 'recovery_boot', 'dimension_innovation', 'do_or_isnt', 'trash_never_empty', 'kickass', 'watching_you']);
+const USER_NUMBERS = Object.freeze(['maxstr', 'mem', 'hand0', 'front', 'back', 'inc_n', 'inc_top']);
+const userNames = (side) => [...USER_NUMBERS.map((n) => `${side}_u_${n}`), ...USER_ABILITIES.map((a) => `${side}_ab_${a}`)];
+
 export const STATE_NAMES = Object.freeze([
   'turn', 'first', 'my_str', 'opp_str', 'str_diff', 'my_mem', 'my_mem_frac', 'my_cap', 'opp_mem', 'opp_cap',
   'my_hand', 'my_deck', 'my_registry', 'my_back', 'my_trash', 'opp_hand', 'opp_deck', 'opp_registry_up', 'opp_trash',
   'my_obs', 'my_asleep', 'my_ready', 'my_atk', 'my_hp', 'opp_obs', 'opp_asleep', 'opp_atk', 'opp_hp',
-  'my_crossed', 'opp_crossed'
+  'my_crossed', 'opp_crossed',
+  ...userNames('my'), ...userNames('opp')
 ]);
 
 export const CAND_NAMES = Object.freeze([
@@ -78,6 +86,10 @@ function cardView(card) {
   };
 }
 
+// What the observation shows of a user card (public information: both seats see both user cards).
+const userView = (user) => ({ maxStr: num(user?.maxFortressStr), memory: num(user?.memory), initialHand: num(user?.initialHand), frontLimit: num(user?.frontLimit), backLimit: num(user?.backLimit),
+  incidents: [...(user?.incidents ?? [])], ability: String(user?.abilityKey ?? '') });
+
 // The seat's view of its query: the only reader of the observation.
 export function queryView(query) {
   const o = query.observation;
@@ -99,13 +111,15 @@ export function queryView(query) {
     me: {
       str: num(me.fortressStr), memory: num(me.memory?.current), cap: num(me.memory?.max), ...mine,
       handN: me.hand?.count ?? mine.hand.length, deckN: num(me.deck?.count), registryN: num(me.registry?.count), trashN: num(me.trash?.count),
-      crossed: (me.incidents ?? []).length, thresholds: [...(me.user?.incidents ?? [])], triggered: [...(me.incidents ?? [])], frontLimit: num(me.user?.frontLimit), backLimit: num(me.user?.backLimit)
+      crossed: (me.incidents ?? []).length, thresholds: [...(me.user?.incidents ?? [])], triggered: [...(me.incidents ?? [])], frontLimit: num(me.user?.frontLimit), backLimit: num(me.user?.backLimit),
+      user: userView(me.user)
     },
     opp: {
       str: num(opp.fortressStr), memory: num(opp.memory?.current), cap: num(opp.memory?.max), ...theirs,
       handN: num(opp.hand?.count), deckN: num(opp.deck?.count), trashN: num(opp.trash?.count),
       registryUpN: (opp.registry?.cards ?? []).filter((card) => !card.faceDown).length,
-      crossed: (opp.incidents ?? []).length, thresholds: [...(opp.user?.incidents ?? [])], triggered: [...(opp.incidents ?? [])]
+      crossed: (opp.incidents ?? []).length, thresholds: [...(opp.user?.incidents ?? [])], triggered: [...(opp.incidents ?? [])],
+      user: userView(opp.user)
     }
   };
 }
@@ -120,6 +134,11 @@ function board(cards) {
   return { obs, asleep, ready, atk, hp };
 }
 
+function userFeatures(u) {
+  const incidents = u.incidents ?? [];
+  return [u.maxStr / 30, u.memory / 10, u.initialHand / 8, u.frontLimit / 5, u.backLimit / 5, incidents.length / 4, (incidents[0] ?? 0) / 30, ...USER_ABILITIES.map((key) => (u.ability === key ? 1 : 0))];
+}
+
 export function stateFeatures(view) {
   const a = board(view.me.front); const b = board(view.opp.front);
   return Float64Array.from([
@@ -128,7 +147,8 @@ export function stateFeatures(view) {
     view.me.handN / 10, view.me.deckN / 30, view.me.registryN / 10, view.me.back.length / 5, view.me.trashN / 20,
     view.opp.handN / 10, view.opp.deckN / 30, view.opp.registryUpN / 10, view.opp.trashN / 20,
     a.obs / 5, a.asleep / 5, a.ready / 5, a.atk / 20, a.hp / 20, b.obs / 5, b.asleep / 5, b.atk / 20, b.hp / 20,
-    view.me.crossed / 4, view.opp.crossed / 4
+    view.me.crossed / 4, view.opp.crossed / 4,
+    ...userFeatures(view.me.user), ...userFeatures(view.opp.user)
   ]);
 }
 
