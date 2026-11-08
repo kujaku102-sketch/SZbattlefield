@@ -5,10 +5,30 @@ import path from 'node:path';
 import { playGame } from './play.mjs';
 import { inScope } from './teachers/llm.mjs';
 
+// a panel: the limits of its set (all together and for each provider) are what the files of the set have not spent yet, shared out between the processes
+async function makePanel(config, workers) {
+  const { createPanel } = await import('./teachers/panel.mjs');
+  const { priorSpend } = await import('./teachers/ledger.mjs');
+  const share = Math.max(1, workers ?? 1);
+  const budget = { ...(config.budget ?? {}) };
+  if (config.ledgerDir) {
+    const spent = priorSpend(config.ledgerDir, config.set ?? 'panel');
+    if (Number.isFinite(budget.maxUsd)) budget.maxUsd = Math.max(0, budget.maxUsd - spent.usd);
+    if (Number.isFinite(budget.maxCalls)) budget.maxCalls = Math.max(0, budget.maxCalls - spent.calls);
+    if (budget.perProvider) budget.perProvider = Object.fromEntries(Object.entries(budget.perProvider).map(([k, v]) => [k, Math.max(0, v - (spent.usdBy[k] ?? 0))]));
+    config.ledgerFile = path.join(config.ledgerDir, `${config.set ?? 'panel'}-${process.pid}.jsonl`);
+  }
+  if (Number.isFinite(budget.maxUsd)) budget.maxUsd /= share;
+  if (Number.isFinite(budget.maxCalls)) budget.maxCalls = Math.floor(budget.maxCalls / share);
+  if (budget.perProvider) budget.perProvider = Object.fromEntries(Object.entries(budget.perProvider).map(([k, v]) => [k, v / share]));
+  return createPanel({ ...config, budget });
+}
+
 let llmTeacher = null;
 async function makeLlmTeacher(limits, workers) {
   const { createLlmTeacher } = await import('./teachers/llm.mjs');
   const settings = JSON.parse(readFileSync(limits.llmConfig, 'utf8'));
+  if (settings.kind === 'llm-panel' || settings.models) return makePanel(settings, workers);
   // a set of questions has a limit of its own: what the files of the set (ledgerDir/<set>*.jsonl, one for each process) already hold is spent
   if (settings.set && settings.ledgerDir) {
     let spentUsd = 0; let spentCalls = 0;

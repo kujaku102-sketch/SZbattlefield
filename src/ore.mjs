@@ -87,7 +87,8 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
     const p = buildPrompt(query, built.cands);
     const answers = {};
     if (llm) {
-      answers.llm = { n: nOf(k), reason: llm.reason ?? '', error: llm.error ?? null, model: llm.model, usd: llm.usd ?? 0, usage: llm.usage ?? null, latencyMs: llm.latencyMs ?? null, cached: Boolean(llm.cached), promptHash: llm.promptHash };
+      answers.llm = { n: nOf(k), reason: llm.reason ?? '', error: llm.error ?? null, model: llm.model, usd: llm.usd ?? 0, usage: llm.usage ?? null, latencyMs: llm.latencyMs ?? null, cached: Boolean(llm.cached), promptHash: llm.promptHash, ...(llm.agreement ? { agreement: llm.agreement } : {}) };
+      if (llm.answers) answers.llms = Object.fromEntries(Object.entries(llm.answers).map(([name, a]) => [name, { n: a.choice ?? null, reason: a.reason ?? '', error: a.error ?? null, model: a.model, usd: a.usd ?? 0, usage: a.usage ?? null, latencyMs: a.latencyMs ?? null, cached: Boolean(a.cached), ...(a.via ? { via: a.via } : {}) }]));
       if (compare?.intent?.ok) answers.teacher = { n: nOf(find(compare.intent.action ?? compare.intent.value.action)), baseline: false, why: compare.cpu.lastDecision?.why ?? '', scores: t };
     } else answers.teacher = { n: nOf(k), baseline: k !== null && k >= built.cands.length, why, scores: t };
     if (sk !== undefined) answers.student = { n: nOf(sk) };

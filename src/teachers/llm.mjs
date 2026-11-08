@@ -18,7 +18,7 @@
 // scope: { types: ["install", "executeCard"], noGain: true } which decisions the harness asks about at all (see inScope)
 //
 // settings: { transport: "direct"|"replay"|"dry", model, maxTokens, temperature, concurrency, maxUsd, maxCalls, pricePerMTok: { input, output, cacheRead?, cacheWrite? },
-//             responsesDir, ledgerFile, timeoutMs, endpoint, version }      (the API key is not a setting: src/teachers/secrets.mjs, FORGE_LLM_API_KEY only)
+//             responsesDir, ledgerFile, timeoutMs, endpoint, version }      (the API key is not a setting: src/teachers/secrets.mjs; FORGE_ANTHROPIC_API_KEY for anthropic, GEMINI_API_KEY for gemini, nothing else)
 // The address to send to is `endpoint` of the settings (the official API by default) and nothing else: no SDK, no environment variable or profile is looked at for it, and
 // every call written in the ledger carries the host it went to. An address that is not https is refused.
 import { createHash } from 'node:crypto';
@@ -27,7 +27,8 @@ import path from 'node:path';
 import { buildCandidates, completeCandidate } from '../../cpus/learned/candidates.mjs';
 import { buildPrompt, PROMPT_VERSION } from './prompt.mjs';
 import { maxCostOf, openLedger, priceOf } from './ledger.mjs';
-import { readApiKey, redact } from './secrets.mjs';
+import { keyEnvOf, readApiKey, redact } from './secrets.mjs';
+import { actionSignature } from '../../cpus/learned/candidates.mjs';
 
 const hashOf = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -76,17 +77,19 @@ const PROVIDERS = {
   }
 };
 
-export function createLlmTeacher(settings, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
+// `ledger`: a ledger the caller opened and shares between several models (src/teachers/panel.mjs); without it the settings' own ledgerFile is opened
+export function createLlmTeacher(settings, { env = process.env, fetchImpl = globalThis.fetch, ledger: sharedLedger = null } = {}) {
   const s = { transport: 'dry', provider: 'anthropic', model: 'claude-haiku-5-5', maxTokens: 300, temperature: 0, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000, retries: 4,
     version: '2023-06-01', ...settings };
   if (!PROVIDERS[s.provider]) throw new Error(`provider ${s.provider}? one of ${Object.keys(PROVIDERS).join(', ')}`);
+  keyEnvOf(s.provider, s.keyEnv);
   s.endpoint ??= ENDPOINTS[s.provider](s.model);
   if (s.set && s.ledgerDir && !s.ledgerFile) s.ledgerFile = path.join(s.ledgerDir, `${s.set}.jsonl`);
   const priceNow = () => (s.pricing ? priceAt(s.pricing) : { ...s.pricePerMTok, version: 'fixed' });
   let endpointHost = null; try { const u = new URL(s.endpoint); endpointHost = u.protocol === 'https:' ? u.host : null; } catch { /* refused below */ }
   const params = { ...(s.provider === 'anthropic' ? {} : { provider: s.provider }), model: s.model, max_tokens: s.maxTokens, temperature: s.temperature };
   const stats = { decisions: 0, calls: 0, cached: 0, errors: {}, promptChars: 0, estimatedInputTokens: 0, maxUsd: 0, usd: 0, usage: { input_tokens: 0, output_tokens: 0 }, stopped: null };
-  const ledger = s.ledgerFile ? openLedger(s.ledgerFile, { maxUsd: s.maxUsd, maxCalls: s.maxCalls }) : null;
+  const ledger = sharedLedger ?? (s.ledgerFile ? openLedger(s.ledgerFile, { maxUsd: s.maxUsd, maxCalls: s.maxCalls }) : null);
   if (s.responsesDir) mkdirSync(s.responsesDir, { recursive: true });
   let inFlight = 0; const waiting = [];
   const slot = async () => { if (inFlight >= s.concurrency) await new Promise((resolve) => waiting.push(resolve)); inFlight += 1; };
@@ -97,8 +100,8 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   async function callApi(request) {
     if (!endpointHost) return { error: { kind: 'endpoint', message: 'the endpoint of the settings is not an https address' } };
-    const apiKey = readApiKey(env);
-    if (!apiKey) return { error: { kind: 'no-key', message: 'no API key in the environment (FORGE_LLM_API_KEY)' } };
+    const apiKey = readApiKey(env, s.provider);
+    if (!apiKey) return { error: { kind: 'no-key', message: `no API key in the environment (${keyEnvOf(s.provider)})` } };
     const started = Date.now(); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), s.timeoutMs);
     try {
       const made = PROVIDERS[s.provider].request(s, params, request.prompt, apiKey);
@@ -128,7 +131,7 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     }
     if (s.transport === 'replay') { stats.errors['replay-miss'] = (stats.errors['replay-miss'] ?? 0) + 1; return { ...base, choice: null, error: { kind: 'replay-miss', message: 'no recorded answer for this prompt' } }; }
     if (s.transport === 'dry') { stats.errors['dry-run'] = (stats.errors['dry-run'] ?? 0) + 1; return { ...base, choice: null, error: { kind: 'dry-run', message: 'no call is made' } }; }
-    if (ledger) { const ok = ledger.canSpend(estimate); if (!ok.ok) { stats.stopped = 'budget'; stats.errors.budget = (stats.errors.budget ?? 0) + 1; return { ...base, choice: null, error: { kind: 'budget', message: ok.reason } }; } }
+    if (ledger) { const ok = ledger.canSpend(estimate, s.provider); if (!ok.ok) { stats.stopped = 'budget'; stats.errors.budget = (stats.errors.budget ?? 0) + 1; return { ...base, choice: null, error: { kind: 'budget', message: ok.reason } }; } }
     await slot();
     let result;
     for (let attempt = 0; ; attempt += 1) {
@@ -154,10 +157,17 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     return { ...base, ...parsed, raw: result.raw, usage: result.usage, usd, latencyMs: result.latencyMs, cached: false };
   }
 
-  // a CPU-like teacher for the harness (--shadow llm): the decision is asked, the chosen candidate is made into an action
-  function create() {
+  function create() { return chooser((request) => ask(request)); }
+  return { settings: s, ask, create, stats, ledger, endpointHost };
+}
+
+// a CPU-like teacher for the harness (--shadow llm): the decision is asked, the chosen candidate is made into an action.
+//   askDecision(request, hint) -> a DecisionAnswer ({ choice, reason, error, ... }); hint: what the looking-ahead teacher chose on the same decision ({ action, type, why, n }), when there is one
+//   srcOf(answer) -> the `src` the record of the decision is given (hammer --sources weighs records by it)
+export function chooser(askDecision, srcOf = () => 'llm') {
     return {
-      src: 'llm', lastDecision: null,
+      get src() { return srcOf(this.lastDecision?.llm ?? null); },
+      lastDecision: null,
       async choose(view) {
         this.lastDecision = null;
         // before the first turn (keep the hand or draw again) is not a decision of play: the game's own CPU answers it, no call is made
@@ -166,7 +176,8 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
         if (built.cands.length < 2) { this.lastDecision = { kind: 'baseline', why: 'no-choice' }; return view.baseline(); }
         const prompt = buildPrompt(view.query, built.cands);
         const request = { id: `${view.seatId}|${view.query.status.revision}`, prompt: { system: prompt.system, user: prompt.user }, candidates: prompt.candidates, meta: { promptVersion: PROMPT_VERSION } };
-        const answer = await ask(request);
+        const hint = view.hint ? { ...view.hint, n: view.hint.action ? built.cands.findIndex((c) => c.sig === actionSignature(view.hint.action)) + 1 || null : null } : null;
+        const answer = await askDecision(request, hint);
         this.llm = { request, answer, built };
         if (answer.choice === null) { this.lastDecision = { kind: 'baseline', why: `llm-${answer.error?.kind ?? 'none'}`, llm: answer }; return view.baseline(); }
         const action = completeCandidate(view.query, built.cands[answer.choice - 1], view.queryAction);
@@ -175,8 +186,6 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
         return { ok: true, value: { commandId: view.commandId, expectedRevision: view.query.status.revision, action } };
       }
     };
-  }
-  return { settings: s, ask, create, stats, ledger };
 }
 
 // the price of a run before paying it: from the stats of a dry run (settings.pricePerMTok given)

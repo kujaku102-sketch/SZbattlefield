@@ -163,7 +163,8 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           }
           if (!skipTeacher) {
           const teacher = shadow.create();
-          const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: isLlm ? undefined : simView, baseline: base });
+          const hint = isLlm && compare?.intent?.ok ? { action: compare.intent.value.action, type: compare.intent.value.action.type, why: compare.cpu.lastDecision?.why ?? null } : null;
+          const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: isLlm ? undefined : simView, baseline: base, hint });
           const kind = teacher.lastDecision?.kind;
           const usable = teacherIntent?.ok && !(kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why));
           if (teacherIntent?.ok) {
