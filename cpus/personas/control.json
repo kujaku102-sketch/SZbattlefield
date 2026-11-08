@@ -1,7 +1,18 @@
 {
   "name": "control",
   "jp": "コントロール",
-  "note": "Cards in hand and in the registry count more than the fortress STR race; one's own STR is kept dear (ownStr), taking down the other side's board counts extra (oppBoard), attackers that are ready count little: it waits, builds up, answers, and ends the game late.",
-  "weights": { "str": 1, "ownStr": 2.5, "board": 0.8, "oppBoard": 1.5, "ready": 0.4, "hand": 2.2, "registry": 2, "back": 0.8, "memory": 0.2, "hp": 0.6 },
+  "note": "Cards in the registry count most (it builds up there), cards in hand and the fortress STR race count less; one's own STR is kept dear (ownStr), taking down the other side's board counts extra (oppBoard), attackers that are ready count little: it builds up, answers their cards, trades, and goes at the user less. Measured on 98 matches each way against simple: registry 2.9 at the end of its turns (beatdown CPUs 2.3-2.8), attacks at cards 18% (13%), trades 0.5 a match (0.3), kills 0.9 (0.5).",
+  "weights": {
+    "str": 1,
+    "ownStr": 2.5,
+    "board": 0.8,
+    "oppBoard": 1.5,
+    "ready": 0.4,
+    "hand": 2.2,
+    "registry": 2.8,
+    "back": 0.8,
+    "memory": 0.2,
+    "hp": 0.6
+  },
   "colorAdjust": {}
 }

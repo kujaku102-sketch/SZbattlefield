@@ -10,7 +10,11 @@ import path from 'node:path';
 const argv = process.argv.slice(2); const dirs = []; const opt = {};
 for (let i = 0; i < argv.length; i += 1) { if (argv[i].startsWith('--')) { opt[argv[i].slice(2)] = argv[i + 1]; i += 1; } else dirs.push(argv[i]); }
 if (dirs.length === 0) { console.error('usage: style-report.mjs <run dir>... [--by cpu|cpu+opponent] [--json out.json]'); process.exit(2); }
-const nameOf = (spec) => path.basename(String(spec)).replace(/\.mjs$/, '');
+// cpus/release/gen2/beatZIG.mjs is named 'beatZIG gen2' (the line and the generation); any other CPU by its file name
+const nameOf = (spec) => {
+  const m = /(?:^|[\\/])release[\\/](gen\d+)[\\/]([^\\/]+)\.mjs$/.exec(String(spec));
+  return m ? `${m[2]} ${m[1]}` : path.basename(String(spec)).replace(/\.mjs$/, '');
+};
 const rows = new Map();
 for (const dir of dirs) {
   const file = path.join(dir, 'raw.jsonl'); if (!existsSync(file)) continue;
