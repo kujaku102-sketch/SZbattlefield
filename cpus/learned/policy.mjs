@@ -48,7 +48,7 @@ export function scoreDecision(query, queryAction, W, history, cross = null, nBas
   return { built, features, scores: features.cands.map((f) => dot(W, f, nBase) + (cross ? crossDot(W, f, features.state, cross) : 0)) };
 }
 
-export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, mlp = null, meta = {} }) {
+export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, mlp = null, topk = null, meta = {} }) {
   // a CPU made for an older, shorter list of features reads that list (the new features come after it and weigh nothing for it)
   if (featureVersion > FEATURE_VERSION || featureNames.length > CAND_NAMES.length || featureNames.some((name, i) => name !== CAND_NAMES[i])) {
     throw new Error(`${id}: made for features v${featureVersion} (${featureNames.length}), this build has v${FEATURE_VERSION} (${CAND_NAMES.length}); forge it again`);
@@ -62,7 +62,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
   const WE = staged ? Float64Array.from(entryWeights) : null;
   const WO = staged ? Float64Array.from(optionWeights) : null;
   return {
-    id, needsBaseline: true, meta,
+    id, needsBaseline: true, needsSim: Boolean(topk), meta,
     create() {
       let last = { revision: -1 };
       let turn = null;
@@ -96,7 +96,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
       };
       const blocked = (type, cardRef, key) => type !== 'endTurn' && (noEffect.has(key) || (REPEAT_LIMITED.has(type) && (history.used.get(`${type}:${cardRef ?? ''}`) ?? 0) >= 1));
       return {
-        needsBaseline: true, counters,
+        needsBaseline: true, needsSim: Boolean(topk), counters,
         choose(view) {
           const { query, queryAction } = view;
           const revision = query.status?.revision;
@@ -117,13 +117,16 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
           if (!staged) {
             const { built, scores } = scoreDecision(query, queryAction, W, history, cross, nBase, net);
             counters.planCalls += built.planCalls;
-            let best = -1; let bestScore = -Infinity;
+            let best = -1; let bestScore = -Infinity; const eligible = [];
             for (let i = 0; i < scores.length; i += 1) {
               const candidate = built.cands[i];
               if (tooMany && candidate?.type !== 'endTurn') continue;
               if (candidate && blocked(candidate.type, candidate.cardRef, `own:${candidate.sig}`)) continue;
+              eligible.push(i);
               if (scores[i] > bestScore) { bestScore = scores[i]; best = i; }
             }
+            // a reader looks at the best few by score (cpus/topk-core.mjs) and may choose another of them
+            if (topk && best >= 0 && view.sim) { counters.topk = topk.stats; const picked = topk.pick({ sim: view.sim, built, scores, eligible }); if (picked !== null) best = picked; }
             if (best < 0 || best >= built.cands.length) return fallback(view, scores.length === 0 ? 'no-candidate' : 'learned-baseline');
             const action = completeCandidate(query, built.cands[best], queryAction);
             if (!action) return fallback(view, 'plan-refused');
