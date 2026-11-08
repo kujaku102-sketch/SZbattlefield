@@ -7,6 +7,7 @@ import { loadSimHost } from './sim-host.mjs';
 import { loadCpu } from '../cpus/index.mjs';
 import { appendOreBlock, matchLine, recordDecision, textHeader } from './ore.mjs';
 import { actionSignature } from '../cpus/learned/candidates.mjs';
+import { judgeMoves } from './judge.mjs';
 
 const SEATS = ['seat-a', 'seat-b'];
 const OPENING = new Set(['keepOpeningHand', 'openingMulligan']);
@@ -167,9 +168,18 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: isLlm ? undefined : simView, baseline: base, hint });
           const kind = teacher.lastDecision?.kind;
           const usable = teacherIntent?.ok && !(kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why));
+          // the model and the looking-ahead teacher chose different moves: which is worth more, by playing both out (src/judge.mjs)
+          let judge = null;
+          if (isLlm && shadow.judge && simView && compare?.intent?.ok && teacherIntent?.ok && teacher.lastDecision?.kind === 'llm' && actionSignature(teacherIntent.value.action) !== actionSignature(compare.intent.value.action)) {
+            try {
+              const j = judgeMoves(simView, [teacherIntent.value.action, compare.intent.value.action], shadow.judge);
+              judge = { winner: j.verdict === 0 ? 'llm' : j.verdict === 1 ? 'lookahead' : j.verdict, values: { llm: j.values[0], lookahead: j.values[1] }, samples: j.samples, spread: j.spread, ...(j.reason ? { reason: j.reason } : {}) };
+            } catch (error) { judge = { winner: 'error', message: String(error?.message ?? error).slice(0, 200) }; }
+            const tally = (shadowStats.judge ??= {}); tally[judge.winner] = (tally[judge.winner] ?? 0) + 1;
+          }
           if (teacherIntent?.ok) {
             const line = recordDecision({ query, queryAction: raw, sim: isLlm ? null : simView, cpu: teacher, intent: teacherIntent, student: intent, compare,
-              meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null), text: textLines });
+              meta: { job: job.id, seed: job.seed, seat: actor, rev: status.revision, turn: query.observation?.turnNumber ?? null }, history: historyOf(actor, query.observation?.turnNumber ?? null), text: textLines, judge });
             if (line) oreLines.push(line);
           }
           if (usable) {

@@ -7,6 +7,8 @@
 //   decision.samples     how many determinized states there are
 //   decision.now(k)      determinized state k: what the seat cannot see is re-drawn (src/sim.mjs); read it, do not keep it
 //   decision.after(id,k) a copy of determinized state k with move `id` applied, or null if the engine refuses it
+//   decision.branch(state, who)  the moves of 'me' or 'opp' on any state this decision handed out (a result of after() or branch().after()): { moves, after(id) }. This is how a CPU
+//                        reads further than one move; the states are all determinized ones, nothing of the real match is in them.
 //   decision.intent(id)  the runtime intent for move `id`, to be returned from choose()
 //   decision.elapsedMs() time since the decision was opened
 //
@@ -81,6 +83,33 @@ export async function loadSimHost(gameDir) {
         const copy = sim.shareClone(sample(k));
         const result = G.actions.applyPreparedRuntimeAction(copy, move.adapter, { metadata, referenceState: authority.referenceState });
         return result.ok && ['applied-complete', 'applied-awaiting-input'].includes(result.value.kind) ? copy : null;
+      },
+      // the moves of one side on a state of this decision (a determinized one, or one reached from it by moves). Nothing is offered when it is not that side's turn or a choice is open.
+      branch(state, who) {
+        const seatFor = who === 'me' ? seat : seatIds[seatIds[0] === seat ? 1 : 0];
+        // a card drawn from a determinized deck has no compiled effect yet (the deck cards are not hydrated): the cards in hand get it before their moves are looked for
+        for (const holder of ['player', 'ai']) { const cards = state.players[holder].hand; cards.forEach((card, index) => { if (!card.compiled) cards[index] = G.prepare.hydrateCard(card); }); }
+        const planned = sim.shareClone(state);
+        const ctx = cand.engineContext(planned, metadata, seatFor);
+        const entries = ctx.allowed ? cand.catalog(planned, metadata, seatFor) : [];
+        const expandedHere = mv.expand(ctx, entries);
+        const seenHere = new Set();
+        const list = expandedHere.moves.filter((move) => {
+          const key = [move.type, [...move.uids].sort().join(','), move.action.destination?.zone ?? '', move.action.target?.kind ?? ''].join('|');
+          if (seenHere.has(key)) return false;
+          seenHere.add(key);
+          return true;
+        }).map((move, id) => ({ ...move, id }));
+        return {
+          moves: list.map(({ id, type, uids, action }) => ({ id, type, uids, zone: action.destination?.zone ?? null, targetKind: action.target?.kind ?? null })),
+          after(id) {
+            const move = list[id];
+            if (!move) return null;
+            const copy = sim.shareClone(state);
+            const result = G.actions.applyPreparedRuntimeAction(copy, move.adapter, { metadata, referenceState: authority.referenceState });
+            return result.ok && ['applied-complete', 'applied-awaiting-input'].includes(result.value.kind) ? copy : null;
+          }
+        };
       },
       intent(id, { commandId, expectedRevision }) {
         const move = moves[id];

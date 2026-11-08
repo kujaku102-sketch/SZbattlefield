@@ -100,7 +100,7 @@ export function createPanel(config, { env = process.env, fetchImpl = globalThis.
   }
 
   const srcOf = (answer) => (answer?.agreement ? `llm-${answer.agreement}` : 'llm');
-  const settings = { kind: 'llm-panel', set, scope: config.scope ?? null, transport: config.transport ?? 'dry', models: names, primary };
+  const settings = { kind: 'llm-panel', set, scope: config.scope ?? null, judge: config.judge ?? null, transport: config.transport ?? 'dry', models: names, primary };
   return {
     settings, ask, models: teachers, ledger, panelStats: stats, names, primary,
     create() { return chooser((request, hint) => ask(request, hint), srcOf); },

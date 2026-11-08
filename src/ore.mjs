@@ -49,7 +49,7 @@ export function appendOreBlock(dir, tag, header, lines, prefix = 'ore') {
 //   text                  an array to put the decision written out as words into (src/teachers/prompt.mjs): for reading and auditing, next to the record for learning
 //   compare               { cpu, sim, intent } a second teacher (lookahead) looking at the same decision, when the first is a language model: its values go in "t" and its answer
 //                         is written next to the model's in the text log. An answer of the model that failed (invalid, refused by the limit) goes to the text log only.
-export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined, student = null, text = null, compare = null }) {
+export function recordDecision({ query, queryAction, cpu, sim = null, intent, meta, timing = null, history = undefined, student = null, text = null, compare = null, judge = null }) {
   if (query.requiredInput !== null) return null;
   const last = cpu.lastDecision ?? null;
   const llm = last?.llm ?? null;
@@ -92,6 +92,7 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
       if (compare?.intent?.ok) answers.teacher = { n: nOf(find(compare.intent.action ?? compare.intent.value.action)), baseline: false, why: compare.cpu.lastDecision?.why ?? '', scores: t };
     } else answers.teacher = { n: nOf(k), baseline: k !== null && k >= built.cands.length, why, scores: t };
     if (sk !== undefined) answers.student = { n: nOf(sk) };
+    if (judge) answers.judge = judge;
     text.push(JSON.stringify({ id: `${meta.job}|${meta.seat}|${meta.rev}`, ...meta, prompt: p.user, candidates: p.candidates, answers }));
   }
   if (skipOre) return null;
