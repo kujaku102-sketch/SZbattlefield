@@ -76,7 +76,7 @@ out.push(`# カード別の集計（${by} 別）`, '');
 out.push(`対戦の記録 ${matches} 試合（席ごとに数える）。数えるのは、その席から見えたものだけ（自分の手札・レジストリ・自分の実行）。相手の手札や山札の中身は使っていない。`, '');
 out.push('定義:');
 out.push('- 来た = その席の手札かレジストリに、試合のどこかで一度でもあったカード（初手、ドロー、レジストリへの配置を含む）。枚数で数える。');
-out.push('- 実行 = executeCard・executeSpell・setScript・executeLayered・executeRegistry・mountCard で実行されたこと。他のカードの効果で場に出たものは実行に入れない。');
+out.push('- 実行 = executeCard・executeSpell・setScript・executeLayered・executeRegistry・mountCard で実行されたこと。他のカードの効果で場に出たものは実行に入れない。Plugin（P-in）はレジストリにある間だけ効果を出すので、インストールを実行に数える。');
 out.push('- 起動回数 = 場に出たカードの効果・スクリプトを起動した回数（activateCardEffect・activateScript）。実行ではないので、残った率には入らない。');
 out.push('- **使われず残った率 = 手札かレジストリに来たのに、試合が終わるまで一度も実行されなかった枚数 ÷ 来た枚数。**');
 out.push('- 来た試合の勝率 / 実行した試合の勝率 = その席が勝った割合（95% の幅は Wilson、n はその試合数）。カードが勝ちを生んだ印ではなく、「そのカードが出てくる試合での勝率」。');

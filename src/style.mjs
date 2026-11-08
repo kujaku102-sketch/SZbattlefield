@@ -15,6 +15,7 @@ const HOLDERS = ['player', 'ai'];
 const uidsOf = (player, zones) => new Set(zones.flatMap((zone) => (player[zone] ?? []).map((card) => card.uid)));
 const EXECUTIONS = new Set(['executeCard', 'executeSpell', 'setScript', 'executeLayered', 'executeRegistry', 'mountCard']);
 const ACTIVATIONS = new Set(['activateCardEffect', 'activateScript']);
+const PLUGINS = new Set(['Plugin', 'P-in']);      // a Plugin works only in the registry (rulebook 4.6): installing it is how it is used, so its installation counts as its execution
 const instanceOf = (card) => card.identity?.instanceId ?? card.uid;      // the match record names a card "card:<instance id>"
 
 export function createStyle() {
@@ -41,7 +42,9 @@ export function createStyle() {
       if (!pending) return;
       const s = seats[pending.seat]; const me = state.players[HOLDERS[pending.seat]]; const other = state.players[HOLDERS[1 - pending.seat]];
       s.moves[pending.type] = (s.moves[pending.type] ?? 0) + 1;
-      const uid = EXECUTIONS.has(pending.type) && typeof recorded?.cardRef === 'string' && recorded.cardRef.startsWith('card:') ? recorded.cardRef.slice(5) : null;
+      const ref = typeof recorded?.cardRef === 'string' && recorded.cardRef.startsWith('card:') ? recorded.cardRef.slice(5) : null;
+      const pluginInstall = pending.type === 'install' && ref !== null && (me.registry ?? []).some((c) => instanceOf(c) === ref && PLUGINS.has(c.category ?? c.printedCategory));
+      const uid = ref !== null && (EXECUTIONS.has(pending.type) || pluginInstall) ? ref : null;
       if (uid) {
         const card = seen[pending.seat].has(uid) ? null : ['hand', 'registry', 'front', 'back', 'trash'].flatMap((zone) => me[zone] ?? []).find((c) => instanceOf(c) === uid);
         const entry = seen[pending.seat].get(uid) ?? { id: card?.id ?? uid, executed: 0 };    // a card that did not come through the hand or the registry came by the execution itself
