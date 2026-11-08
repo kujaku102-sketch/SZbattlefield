@@ -13,6 +13,7 @@
 import { candidateFeatures, decisionContext, decisionFeatures, entryCandidates, FEATURE_VERSION, CAND_NAMES, STATE_NAMES, queryView } from './features.mjs';
 import { buildCandidates, completeCandidate, planEntry } from './candidates.mjs';
 import { createLoopGuard } from './loopguard.mjs';
+import { baseOf, netFromWeights, scoreCandidate } from './mlp.mjs';
 
 const REPEAT_LIMITED = new Set(['redeploy', 'activateCardEffect']);
 const MOVES_PER_TURN = 40;
@@ -40,13 +41,14 @@ const crossDot = (W, f, state, cross) => {
 };
 
 // flat: scores of a decision
-export function scoreDecision(query, queryAction, W, history, cross = null, nBase = CAND_NAMES.length) {
+export function scoreDecision(query, queryAction, W, history, cross = null, nBase = CAND_NAMES.length, net = null) {
   const built = buildCandidates(query, queryAction);
   const features = decisionFeatures(query, built, history, { withEntries: false });
+  if (net) { const base = baseOf(net, features.state); return { built, features, scores: features.cands.map((f) => scoreCandidate(net, base, f)) }; }
   return { built, features, scores: features.cands.map((f) => dot(W, f, nBase) + (cross ? crossDot(W, f, features.state, cross) : 0)) };
 }
 
-export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, meta = {} }) {
+export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, mlp = null, meta = {} }) {
   // a CPU made for an older, shorter list of features reads that list (the new features come after it and weigh nothing for it)
   if (featureVersion > FEATURE_VERSION || featureNames.length > CAND_NAMES.length || featureNames.some((name, i) => name !== CAND_NAMES[i])) {
     throw new Error(`${id}: made for features v${featureVersion} (${featureNames.length}), this build has v${FEATURE_VERSION} (${CAND_NAMES.length}); forge it again`);
@@ -54,6 +56,8 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
   const nBase = featureNames.length;
   const W = Float64Array.from(weights ?? []);
   const cross = crossOf(crossSpec, nBase);
+  const net = mlp ? netFromWeights(mlp) : null;
+  if (net && net.F !== CAND_NAMES.length) throw new Error(`${id}: the network was made for ${net.F} features, this build has ${CAND_NAMES.length}; forge it again`);
   const staged = entryWeights !== null;
   const WE = staged ? Float64Array.from(entryWeights) : null;
   const WO = staged ? Float64Array.from(optionWeights) : null;
@@ -111,7 +115,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             return hand(key, query, { ok: true, value: { commandId: view.commandId, expectedRevision: revision, action } });
           };
           if (!staged) {
-            const { built, scores } = scoreDecision(query, queryAction, W, history, cross, nBase);
+            const { built, scores } = scoreDecision(query, queryAction, W, history, cross, nBase, net);
             counters.planCalls += built.planCalls;
             let best = -1; let bestScore = -Infinity;
             for (let i = 0; i < scores.length; i += 1) {
