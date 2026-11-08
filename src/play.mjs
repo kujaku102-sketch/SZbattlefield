@@ -216,7 +216,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           record.commands.push({ seat: actor, action: encoded.value, ...(card ? { card } : {}) });
           authority = submitted.value.authority;
           trace?.after(authority.engineState, SEATS.indexOf(actor));
-          style?.after(authority.engineState);
+          style?.after(authority.engineState, encoded.value);
         }
       }
       catch (error) {
