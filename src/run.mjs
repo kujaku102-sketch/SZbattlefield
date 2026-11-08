@@ -22,6 +22,7 @@
 //   --max-loop N    ... or when the same board with the same kind of window comes back N times in one turn, whoever acts (a loop between the two seats; default 30; cap "loop")
 //   --max-repeat N  ... or when the same command is accepted N times in a row in the same state (a loop; default 10; cap "repeat")
 //   --only <text>   only jobs whose id contains the text (for a re-run of one match)
+//   --jobs-file <f> only the jobs whose ids are listed in the file, one a line (a pick, e.g. loop/select.mjs of forgehammer)
 //   --sample N      only every k-th job so that about N matches are played (a fixed pick, for the determinism check)
 //   --reverse       play the jobs in the opposite order
 //   --commit <sha>  the game commit to test (GAME_COMMIT does the same). The game is fetched from GAME_SOURCE (default: the public Siege_Zeke_openbeta);
@@ -102,6 +103,12 @@ const recordOut = typeof args.record === 'string'
 const table = buildJobs({ cpuA, cpuB, swap, decks, seeds });
 let wanted = shard ? table.filter((_, position) => inShard(position, shard)) : table;
 if (typeof args.only === 'string') wanted = wanted.filter((job) => job.id.includes(args.only));
+if (typeof args['jobs-file'] === 'string') {
+  // exactly these matches (one job id a line; the ones that are not in this table are not played here: a pick can span two tables)
+  const ids = new Set(readFileSync(path.resolve(args['jobs-file']), 'utf8').split('\n').map((x) => x.trim()).filter(Boolean));
+  wanted = wanted.filter((job) => ids.has(job.id));
+  console.log(`--jobs-file: ${wanted.length} of its ${ids.size} matches are in this table`);
+}
 if (args.sample) { const step = Math.max(1, Math.floor(wanted.length / Number(args.sample))); wanted = wanted.filter((_, index) => index % step === 0).slice(0, Number(args.sample)); }
 if (args.reverse) wanted = [...wanted].reverse();
 

@@ -48,7 +48,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: szb-loop-round        # one at a time, for this repository
+  group: szb-actions           # one at a time, for this repository (the same group as play-shards)
   cancel-in-progress: false
 
 env:
@@ -81,8 +81,12 @@ jobs:
           [[ "$HAMMER" =~ ^[-A-Za-z0-9\ ._]*$ ]] || { echo "hammer_args: letters, digits, - . _ and space only"; exit 1; }
           [[ -z "$BASE" || "$BASE" =~ ^[0-9]+$ ]] || { echo "base_ore_run: a run id"; exit 1; }
           since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          n=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/loop-round.yml/runs?created=%3E%3D${since}&per_page=50" --jq '[.workflow_runs[] | select(.id != '"${GITHUB_RUN_ID}"') | select(.conclusion != "cancelled" and .conclusion != "skipped")] | length')
-          echo "runs of this workflow in the last 24 hours (not counting this one): $n (limit $MAX_RUNS_PER_DAY)"
+          n=0
+          for wf in loop-round.yml play-shards.yml; do
+            c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?created=%3E%3D${since}&per_page=50" --jq '[.workflow_runs[] | select(.id != '"${GITHUB_RUN_ID}"') | select(.conclusion != "cancelled" and .conclusion != "skipped")] | length')
+            n=$((n + c))
+          done
+          echo "runs of loop-round / play-shards in the last 24 hours (not counting this one): $n (limit $MAX_RUNS_PER_DAY)"
           [ "$n" -lt "$MAX_RUNS_PER_DAY" ] || { echo "the day's limit of runs is reached"; exit 1; }
 
   record:

@@ -1,0 +1,169 @@
+# Plays some shards of one table of matches (and records, when asked): this is GitHub Actions' part when a round is played in several places at once
+# (this machine, Actions, Colab: forgehammer packages/forge/loop/dist.mjs plan says who plays which shard and prints the command to start here).
+# Nothing is joined here: the artifacts are collected with `dist.mjs collect` together with what the other places played.
+# Runs only when started by hand (workflow_dispatch).
+#
+# Own limits (a public repository, shared runners): one run of these workflows at a time (concurrency), at most 8 shards in a start (the matrix), 60 minutes a job,
+# at most 2 runs of loop-round / play-shards together in 24 hours (about 4 CPU hours each; checked first), no cron. The language model is not used here and no secret is given.
+#
+# The CPU that plays (a forged one, made by learning) comes in as an input: its file, gzipped and base64, with the sha256 of the file; it is checked and put in cpus/.
+# The environment must be the same as in the other places (node, game commit, CPU versions, rules): merge refuses otherwise.
+name: play-shards
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_commit:
+        description: 'Siege_Zeke_openbeta commit to play (full sha)'
+        required: true
+      table:
+        description: 'name of the table (letters, digits, - and _): the folder it goes in'
+        required: true
+      cpu_a:
+        description: 'CPU A (a name, or cpus/<file>.mjs for the one given below)'
+        default: simple
+      cpu_b:
+        description: 'CPU B'
+        default: simple
+      seeds:
+        description: 'seeds, a comma list (a single one: 301,)'
+        default: '1,'
+      swap:
+        description: 'also play with the CPUs on the other seats'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
+      shadow:
+        description: 'with record: the teacher CPU that looks at the decisions of the other (lookahead / deep), empty for none'
+        default: ''
+      record:
+        description: 'write the decisions of the teacher (a record for learning)'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
+      shard_total:
+        description: 'the table is cut into this many shards (the same number in every place)'
+        default: '8'
+      shards:
+        description: 'the shards to play here, a comma list of at most 8 (e.g. 3,4,5,6)'
+        required: true
+      cpu_file:
+        description: 'optional: the name of the forged CPU file that cpu_gz_b64 holds (forged-<name>.mjs)'
+        default: ''
+      cpu_gz_b64:
+        description: 'optional: that file, gzipped and base64 (at most about 60000 characters)'
+        default: ''
+      cpu_sha256:
+        description: 'optional: sha256 of that file (checked)'
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: szb-actions           # the same group as loop-round: one run at a time
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.19.0'   # exact: part of the environment key
+  MAX_RUNS_PER_DAY: '2'
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      matrix: ${{ steps.make.outputs.matrix }}
+    steps:
+      - name: Check the inputs and the day's limit, make the matrix
+        id: make
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GAME_COMMIT: ${{ inputs.game_commit }}
+          TABLE: ${{ inputs.table }}
+          CPU_A: ${{ inputs.cpu_a }}
+          CPU_B: ${{ inputs.cpu_b }}
+          SEEDS: ${{ inputs.seeds }}
+          SHADOW: ${{ inputs.shadow }}
+          TOTAL: ${{ inputs.shard_total }}
+          SHARDS: ${{ inputs.shards }}
+          CPU_FILE: ${{ inputs.cpu_file }}
+          CPU_SHA: ${{ inputs.cpu_sha256 }}
+        run: |
+          [[ "$GAME_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "game_commit must be a full sha"; exit 1; }
+          [[ "$TABLE" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "table: letters, digits, - and _"; exit 1; }
+          for c in "$CPU_A" "$CPU_B"; do [[ "$c" =~ ^[A-Za-z0-9_-]+$ || "$c" =~ ^cpus/forged-[A-Za-z0-9_-]+\.mjs$ ]] || { echo "cpu: a name or cpus/forged-<name>.mjs"; exit 1; }; done
+          [[ "$SEEDS" =~ ^[0-9]+(,[0-9]+)*,?$ && "$SEEDS" == *,* ]] || { echo "seeds: a comma list (a single seed: 301,)"; exit 1; }
+          [[ -z "$SHADOW" || "$SHADOW" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "shadow: a CPU name"; exit 1; }
+          [[ "$TOTAL" =~ ^[0-9]+$ && "$TOTAL" -ge 1 && "$TOTAL" -le 64 ]] || { echo "shard_total: 1..64"; exit 1; }
+          [[ "$SHARDS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "shards: a comma list"; exit 1; }
+          n=$(echo "$SHARDS" | tr ',' '\n' | wc -l); [ "$n" -le 8 ] || { echo "at most 8 shards in one start"; exit 1; }
+          for s in $(echo "$SHARDS" | tr ',' ' '); do [ "$s" -ge 1 ] && [ "$s" -le "$TOTAL" ] || { echo "shard $s is not in 1..$TOTAL"; exit 1; }; done
+          [[ -z "$CPU_FILE" || "$CPU_FILE" =~ ^forged-[A-Za-z0-9_-]+\.mjs$ ]] || { echo "cpu_file: forged-<name>.mjs"; exit 1; }
+          [[ -z "$CPU_SHA" || "$CPU_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "cpu_sha256: 64 hex digits"; exit 1; }
+          since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          count=0
+          for wf in loop-round.yml play-shards.yml; do
+            c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?created=%3E%3D${since}&per_page=50" --jq '[.workflow_runs[] | select(.id != '"${GITHUB_RUN_ID}"') | select(.conclusion != "cancelled" and .conclusion != "skipped")] | length')
+            count=$((count + c))
+          done
+          echo "runs of loop-round / play-shards in the last 24 hours (not counting this one): $count (limit $MAX_RUNS_PER_DAY)"
+          [ "$count" -lt "$MAX_RUNS_PER_DAY" ] || { echo "the day's limit of runs is reached"; exit 1; }
+          echo "matrix={\"shard\":[${SHARDS}]}" >> "$GITHUB_OUTPUT"
+
+  play:
+    needs: check
+    runs-on: ubuntu-24.04           # 4 vCPU, 16 GB on public repositories. Pinned, not ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/Siege_Zeke_openbeta
+          ref: ${{ inputs.game_commit }}
+          path: game
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Put the forged CPU in place (if one was given)
+        env:
+          CPU_FILE: ${{ inputs.cpu_file }}
+          CPU_GZ_B64: ${{ inputs.cpu_gz_b64 }}
+          CPU_SHA: ${{ inputs.cpu_sha256 }}
+        run: |
+          if [ -n "$CPU_GZ_B64" ]; then
+            [ -n "$CPU_FILE" ] && [ -n "$CPU_SHA" ] || { echo "cpu_file and cpu_sha256 go with cpu_gz_b64"; exit 1; }
+            printf '%s' "$CPU_GZ_B64" | base64 -d | gunzip > "cpus/$CPU_FILE"
+            echo "$CPU_SHA  cpus/$CPU_FILE" | sha256sum -c -
+          fi
+      - name: Play the shard
+        env:
+          GAME_DIR: ${{ github.workspace }}/game
+          GAME_COMMIT: ${{ inputs.game_commit }}
+          TABLE: ${{ inputs.table }}
+          CPU_A: ${{ inputs.cpu_a }}
+          CPU_B: ${{ inputs.cpu_b }}
+          SEEDS: ${{ inputs.seeds }}
+          SWAP: ${{ inputs.swap }}
+          SHADOW: ${{ inputs.shadow }}
+          RECORD: ${{ inputs.record }}
+          TOTAL: ${{ inputs.shard_total }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          extra=()
+          [ "$SWAP" = "true" ] && extra+=(--swap)
+          [ -n "$SHADOW" ] && extra+=(--shadow "$SHADOW")
+          [ "$RECORD" = "true" ] && extra+=(--record "out/$TABLE/ore")
+          node src/run.mjs --a "$CPU_A" --b "$CPU_B" --seeds "$SEEDS" "${extra[@]}" --shard "$SHARD/$TOTAL" --workers 3 --max-matches 1500 \
+            --out "out/$TABLE/shard-$SHARD-of-$TOTAL"
+      - uses: actions/upload-artifact@v7
+        if: always()                # a stopped shard keeps what it finished; start it again to continue
+        with:
+          name: play-${{ inputs.table }}-${{ matrix.shard }}
+          path: out/
+          retention-days: 14

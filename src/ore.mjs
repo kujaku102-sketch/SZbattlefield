@@ -98,7 +98,7 @@ export function recordDecision({ query, queryAction, cpu, sim = null, intent, me
   if (skipOre) return null;
   const eo = features.cands.map((_, i) => built.cands[i]?.entryIndex ?? -1);
   const ek = entryIndexOf(query, intent.value.action);
-  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek, ...(sk !== undefined ? { sk } : {}), ...(cpu.src ? { src: cpu.src } : {}) });
+  return JSON.stringify({ ...meta, s: Array.from(features.state, sig), c: features.cands.map(sparse), t, k, why, e: features.entries.map(sparse), eo, ek, ...(sk !== undefined ? { sk } : {}), ...(judge?.winner ? { src: `llm-judge-${judge.winner}` } : cpu.src ? { src: cpu.src } : {}) });
 }
 
 export function textHeader(extra = {}) {
