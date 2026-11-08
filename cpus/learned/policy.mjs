@@ -65,6 +65,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
     id, needsBaseline: true, needsSim: Boolean(topk), meta,
     create() {
       let last = { revision: -1 };
+      const reader = topk ? topk.fresh() : null;
       let turn = null;
       let pending = null;
       const noEffect = new Set();
@@ -72,6 +73,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
       const loopGuard = createLoopGuard();                       // what this CPU does not do: repeat a process that changes nothing, on the same board in one turn (cpus/learned/loopguard.mjs)
       let board = '';
       const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0, planCalls: 0, turnEndedByLimit: 0, windowsChanged: 0, loopUnavoidable: 0 };
+      if (reader) counters.topk = reader.stats;
       const hand = (key, query, result) => {
         pending = { key, looks: looks(query), revision: query.status.revision, histKey: result?.ok ? histKeyOf(result.value.action) : null, choice: Boolean(result?.ok && CHOICES.has(result.value.action.type)) };
         return result;
@@ -126,7 +128,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
               if (scores[i] > bestScore) { bestScore = scores[i]; best = i; }
             }
             // a reader looks at the best few by score (cpus/topk-core.mjs) and may choose another of them
-            if (topk && best >= 0 && view.sim) { counters.topk = topk.stats; const picked = topk.pick({ sim: view.sim, built, scores, eligible }); if (picked !== null) best = picked; }
+            if (topk && best >= 0 && view.sim) { const picked = reader.pick({ sim: view.sim, built, scores, eligible }); if (picked !== null) best = picked; }
             if (best < 0 || best >= built.cands.length) return fallback(view, scores.length === 0 ? 'no-candidate' : 'learned-baseline');
             const action = completeCandidate(query, built.cands[best], queryAction);
             if (!action) return fallback(view, 'plan-refused');

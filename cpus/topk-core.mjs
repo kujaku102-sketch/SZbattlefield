@@ -13,10 +13,13 @@ import { playout } from './lookahead/playout.mjs';
 
 const clamp = (v) => Math.max(-200, Math.min(200, v));
 
-export function makeTopk({ k = 3, reader = 'deep', samples = 2, own = 3, opp = 3 } = {}) {
+export function makeTopk(options = {}) {
+  const { k = 3, reader = 'deep', samples = 2, own = 3, opp = 3 } = options;
   const stats = { decisions: 0, read: 0, notReadable: 0, changed: 0, readMs: 0 };
   return {
     stats, k, reader,
+    // a reader of its own for each match (its stats count that match only)
+    fresh: () => makeTopk(options),
     pick({ sim, built, scores, eligible }) {
       stats.decisions += 1;
       const started = performance.now();
