@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // How the CPUs played, from runs made with `--style` (src/style.mjs).
 //
-//   node src/style-report.mjs <run dir>... [--by cpu|cpu+opponent] [--json out.json]
+//   node src/style-report.mjs <run dir>... [--by cpu|cpu+opponent|user|cpu+user] [--json out.json]
 // One row for each CPU (the seats it played, over all the runs): the share of its attacks that went at the other user, at cards; trades and kills per match; what it held at the end
 // of its turns (hand, registry, cards on the board, memory left); the length of its matches (turns); its win rate.
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ import path from 'node:path';
 
 const argv = process.argv.slice(2); const dirs = []; const opt = {};
 for (let i = 0; i < argv.length; i += 1) { if (argv[i].startsWith('--')) { opt[argv[i].slice(2)] = argv[i + 1]; i += 1; } else dirs.push(argv[i]); }
-if (dirs.length === 0) { console.error('usage: style-report.mjs <run dir>... [--by cpu|cpu+opponent] [--json out.json]'); process.exit(2); }
+if (dirs.length === 0) { console.error('usage: style-report.mjs <run dir>... [--by cpu|cpu+opponent|user|cpu+user] [--json out.json]'); process.exit(2); }
 // cpus/release/gen2/beatZIG.mjs is named 'beatZIG gen2' (the line and the generation); any other CPU by its file name
 const nameOf = (spec) => {
   const m = /(?:^|[\\/])release[\\/](gen\d+)[\\/]([^\\/]+)\.mjs$/.exec(String(spec));
@@ -23,7 +23,8 @@ for (const dir of dirs) {
     if (!r.style || r.status !== 'finished') continue;
     for (const seat of ['seat-a', 'seat-b']) {
       const other = seat === 'seat-a' ? 'seat-b' : 'seat-a';
-      const key = opt.by === 'cpu+opponent' ? `${nameOf(r.cpus[seat])} vs ${nameOf(r.cpus[other])}` : nameOf(r.cpus[seat]);
+      const user = r.users?.[seat] ?? 'doors_zx';     // the user card the seat played (rows made before the user was a part of the table: doors_zx)
+      const key = opt.by === 'cpu+opponent' ? `${nameOf(r.cpus[seat])} vs ${nameOf(r.cpus[other])}` : opt.by === 'user' ? `user ${user}` : opt.by === 'cpu+user' ? `${nameOf(r.cpus[seat])} / ${user}` : nameOf(r.cpus[seat]);
       const g = rows.get(key) ?? { matches: 0, wins: 0, turns: 0, user: 0, card: 0, trades: 0, kills: 0, lost: 0, ends: 0, hand: 0, registry: 0, front: 0, back: 0, memoryLeft: 0 };
       const s = r.style[seat]; g.matches += 1; g.turns += r.turns ?? 0; if (r.outcome?.kind === 'win' && r.outcome.winnerSeat === seat) g.wins += 1;
       g.user += s.attacks.user; g.card += s.attacks.card; g.trades += s.trades; g.kills += s.kills; g.lost += s.lost; g.ends += s.ends;

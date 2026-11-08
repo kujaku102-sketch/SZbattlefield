@@ -9,6 +9,10 @@
 //            language model's context, and for counting whether the cards that win were played. None of it is needed to play.
 // The game's own start decks (src/data/start-decks.js) are not touched.
 //
+// A deck SPEC is what a table names: `<deck>` or `<deck>@<user>` (start-red, ctl-1, start-red@bigboss, ctl-1@doors_nt; the user is the key of the game's USER_CARDS). The user of a seat is the one
+// the spec names; without one, the saved deck's own user, and for a start deck doors_zx (what the bench always used). A spec that names the user it would have anyway is written without it, so a
+// table of doors_zx decks has exactly the job names it always had.
+//
 // How a seat starts: the way the game itself starts a match with a saved deck (src/main.js startMatch, src/network/runtime-engine.js): the deck id is the plain 'red' / 'yellow' of the seat,
 // the saved deck's list goes in as the recipe and its user as the user (gameOptions playerDeckRecipe / playerUserId, aiDeckRecipe / aiUserId). The rules do not read the deck id.
 import { createHash } from 'node:crypto';
@@ -20,7 +24,31 @@ import { pathToFileURL } from 'node:url';
 export const DECKS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../decks');
 export const DECK_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
+export const DEFAULT_USER = 'doors_zx';
+export const USER_KEY = /^[a-z][a-z0-9_]*$/;
 export const deckFile = (name) => path.join(DECKS_DIR, `${name}.json`);
+
+// 'start-red@bigboss' -> { name: 'start-red', user: 'bigboss' };  'start-red' -> { name: 'start-red', user: null }
+export function parseSpec(spec) {
+  const at = String(spec).lastIndexOf('@');
+  if (at < 0) return { name: String(spec), user: null };
+  return { name: String(spec).slice(0, at), user: String(spec).slice(at + 1) };
+}
+
+// the user a spec plays with
+export function userOf(spec, startIds) {
+  const { name, user } = parseSpec(spec);
+  if (user) return user;
+  return startIds.includes(name) ? DEFAULT_USER : readDeck(name).deck.userId;
+}
+
+// the spec in its shortest form: '@user' is dropped when it is the user the deck has anyway
+export function canonicalSpec(spec, startIds) {
+  const { name, user } = parseSpec(spec);
+  if (!user) return name;
+  const own = startIds.includes(name) ? DEFAULT_USER : readDeck(name).deck.userId;
+  return user === own ? name : `${name}@${user}`;
+}
 
 export function readDeck(name) {
   if (!DECK_NAME.test(name)) throw new Error(`deck name ${JSON.stringify(name)}: letters, digits, - and _`);
@@ -32,14 +60,17 @@ export function readDeck(name) {
 
 // The part of the game options for one side ("player" is seat-a, "ai" is seat-b): the start deck by id, or a saved deck by its list and its user.
 // Only a saved deck adds anything beyond the id, so a table of start decks is exactly what it was.
-export function deckOptions(name, side, startIds) {
-  if (startIds.includes(name)) return { [`${side}DeckId`]: name };
+export function deckOptions(spec, side, startIds) {
+  const { name } = parseSpec(spec);
+  const user = userOf(spec, startIds);
+  if (startIds.includes(name)) return { [`${side}DeckId`]: name, ...(user === DEFAULT_USER ? {} : { [`${side}UserId`]: user }) };
   const { deck } = readDeck(name);
-  return { [`${side}DeckId`]: side === 'player' ? 'red' : 'yellow', [`${side}DeckRecipe`]: deck.cards.map(([id, count]) => [id, count]), [`${side}UserId`]: deck.userId };
+  return { [`${side}DeckId`]: side === 'player' ? 'red' : 'yellow', [`${side}DeckRecipe`]: deck.cards.map(([id, count]) => [id, count]), [`${side}UserId`]: user };
 }
 
 // saved deck names -> { name: sha256 of its file }, for the environment key (a table made with another list of cards is another table)
-export function deckHashes(names, startIds) {
+export function deckHashes(specs, startIds) {
+  const names = [...new Set(specs.map((spec) => parseSpec(spec).name))];
   return Object.fromEntries(names.filter((name) => !startIds.includes(name)).sort().map((name) => [name, readDeck(name).hash]));
 }
 

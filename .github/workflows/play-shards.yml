@@ -48,7 +48,7 @@ on:
         description: 'the shards to play here, a comma list of at most 8 (e.g. 3,4,5,6)'
         required: true
       decks:
-        description: 'decks, a comma list of start deck ids and/or the names of decks/<name>.json (empty = every start deck)'
+        description: 'decks, a comma list of start deck ids and/or the names of decks/<name>.json, each optionally @user (start-red@bigboss); empty = every start deck'
         default: ''
       style:
         description: 'count how each seat played (attacks at the user, trades, hand/registry/board at the end of its turns, memory left): result.style'
@@ -106,7 +106,7 @@ jobs:
           for c in "$CPU_A" "$CPU_B"; do [[ "$c" =~ ^[A-Za-z0-9_-]+(\?persona=[a-z0-9_-]+)?$ || "$c" =~ ^cpus/forged-[A-Za-z0-9_-]+\.mjs$ ]] || { echo "cpu: a name (optionally ?persona=<name>) or cpus/forged-<name>.mjs"; exit 1; }; done
           [[ "$SEEDS" =~ ^[0-9]+(,[0-9]+)*,?$ && "$SEEDS" == *,* ]] || { echo "seeds: a comma list (a single seed: 301,)"; exit 1; }
           [[ -z "$SHADOW" || "$SHADOW" =~ ^[A-Za-z0-9_-]+(\?persona=[a-z0-9_-]+)?$ ]] || { echo "shadow: a CPU name (optionally ?persona=<name>)"; exit 1; }
-          [[ -z "$DECKS" || "$DECKS" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(,[A-Za-z0-9][A-Za-z0-9_-]*)*$ ]] || { echo "decks: a comma list of deck names (letters, digits, - and _)"; exit 1; }
+          [[ -z "$DECKS" || "$DECKS" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(@[a-z][a-z0-9_]*)?(,[A-Za-z0-9][A-Za-z0-9_-]*(@[a-z][a-z0-9_]*)?)*$ ]] || { echo "decks: a comma list of decks: a name (letters, digits, - and _), optionally @user (start-red@bigboss)"; exit 1; }
           [[ "$TOTAL" =~ ^[0-9]+$ && "$TOTAL" -ge 1 && "$TOTAL" -le 64 ]] || { echo "shard_total: 1..64"; exit 1; }
           [[ "$SHARDS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "shards: a comma list"; exit 1; }
           n=$(echo "$SHARDS" | tr ',' '\n' | wc -l); [ "$n" -le 8 ] || { echo "at most 8 shards in one start"; exit 1; }

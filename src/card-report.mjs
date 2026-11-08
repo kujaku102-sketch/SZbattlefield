@@ -2,7 +2,7 @@
 // Card by card: how often a card was executed, how the seat did in the matches where it was executed / where it came to the hand, and how often it was left unused.
 // Counted from runs made with `--style` (src/style.mjs, "cards"); nothing is played here.
 //
-//   node src/card-report.mjs <run dir>... [--by cpu|deck|persona|cpu+deck] [--min 20] [--out report.md] [--json out.json]
+//   node src/card-report.mjs <run dir>... [--by cpu|deck|persona|cpu+deck|user|cpu+user] [--min 20] [--out report.md] [--json out.json]
 //
 // What is counted (the seat's OWN cards only: its hand, its registry, its executions; the other side's hand and deck are never looked at):
 //   came        the copies of the card that were in the seat's hand or registry at some point of the match (opening hand, draws, what it installed)
@@ -20,9 +20,9 @@ import path from 'node:path';
 
 const argv = process.argv.slice(2); const dirs = []; const opt = {};
 for (let i = 0; i < argv.length; i += 1) { if (argv[i].startsWith('--')) { opt[argv[i].slice(2)] = argv[i + 1]; i += 1; } else dirs.push(argv[i]); }
-if (dirs.length === 0) { console.error('usage: card-report.mjs <run dir>... [--by cpu|deck|persona|cpu+deck] [--min 20] [--out report.md] [--json out.json]'); process.exit(2); }
+if (dirs.length === 0) { console.error('usage: card-report.mjs <run dir>... [--by cpu|deck|persona|cpu+deck|user|cpu+user] [--min 20] [--out report.md] [--json out.json]'); process.exit(2); }
 const by = opt.by ?? 'cpu'; const min = Number(opt.min ?? 20);
-if (!['cpu', 'deck', 'persona', 'cpu+deck'].includes(by)) { console.error('--by: cpu, deck, persona or cpu+deck'); process.exit(2); }
+if (!['cpu', 'deck', 'persona', 'cpu+deck', 'user', 'cpu+user'].includes(by)) { console.error('--by: cpu, deck, persona, cpu+deck, user or cpu+user'); process.exit(2); }
 
 // cpus/release/gen2/beatZIG.mjs is 'beatZIG gen2'; any other CPU by its file name
 const cpuName = (spec) => {
@@ -35,6 +35,9 @@ const keyOf = (r, seat) => {
   if (by === 'cpu') return cpuName(spec);
   if (by === 'deck') return deck;
   if (by === 'persona') return `persona ${personaOf(spec)}`;
+  const user = r.users?.[seat] ?? 'doors_zx';
+  if (by === 'user') return `user ${user}`;
+  if (by === 'cpu+user') return `${cpuName(spec)} / ${user}`;
   return `${cpuName(spec)} / ${deck}`;
 };
 

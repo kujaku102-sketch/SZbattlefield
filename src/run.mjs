@@ -43,7 +43,7 @@ import { fork } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveGameDir } from './game-dir.mjs';
 import { startDeckIds } from './play.mjs';
 import { buildJobs, parseShard, inShard } from './table.mjs';
@@ -78,21 +78,37 @@ if (seeds.length === 0 || seeds.some((x) => !Number.isInteger(x) || x < 0)) { co
 
 const gameDir = resolveGameDir(typeof args.commit === 'string' ? args.commit : null, typeof args.variant === 'string' ? args.variant : null);
 const allDecks = await startDeckIds(gameDir);
-const decks = args.decks && args.decks !== 'all' ? String(args.decks).split(',') : allDecks;
+const requestedDecks = args.decks && args.decks !== 'all' ? String(args.decks).split(',') : allDecks;
 const swap = Boolean(args.swap);
 // Decks that are not the game's start decks come from decks/<name>.json (src/decks.mjs, made by src/deck-import.mjs from a deck the game's deck builder saved). They are checked with the game's
 // own checker (deck-builder.js validateDeck) before anything is played: a deck that breaks its rule stops the run.
-const customDecks = decks.filter((name) => !allDecks.includes(name));
-if (customDecks.length > 0) {
-  const { readDeck, gameDeckBuilder, gameCheck } = await import('./decks.mjs');
+// A deck is named `<deck>` or `<deck>@<user>` (src/decks.mjs): each seat starts with the user card of its deck (the saved deck's own, or doors_zx for a start deck, or the one named after the @).
+// `@<user>` is the key of the game's USER_CARDS (doors_zx, suckintosh, phoenix, humanoid, by_os, doors_nt, savage_salvage, extreme, bigboss). A spec is written without the @ when the user is the one it has anyway.
+let decks = requestedDecks; let users = Object.fromEntries(requestedDecks.map((spec) => [spec, 'doors_zx']));
+if (requestedDecks.some((spec) => !allDecks.includes(spec))) {
+  const { parseSpec, userOf, canonicalSpec, readDeck, gameDeckBuilder, gameCheck } = await import('./decks.mjs');
   const builder = await gameDeckBuilder(gameDir);
-  const bad = [];
-  for (const name of customDecks) {
-    let deck;
-    try { deck = readDeck(name).deck; } catch (error) { bad.push(`${name}: ${error.message} (the start decks: ${allDecks.join(', ')})`); continue; }
-    for (const error of gameCheck(builder, deck).errors) bad.push(`${name}: ${error}`);
+  const { USER_CARDS } = await import(pathToFileURL(path.join(gameDir, 'src/data/cards.js')).href);
+  const { START_DECKS } = await import(pathToFileURL(path.join(gameDir, 'src/data/start-decks.js')).href);
+  const bad = []; const warn = []; const specs = [];
+  for (const requested of requestedDecks) {
+    const { name, user } = parseSpec(requested);
+    let deck = null;
+    if (!allDecks.includes(name)) {
+      try { deck = readDeck(name).deck; } catch (error) { bad.push(`${requested}: ${error.message} (the start decks: ${allDecks.join(', ')})`); continue; }
+    }
+    if (user !== null && !Object.hasOwn(USER_CARDS, user)) { bad.push(`${requested}: user ${user}? one of ${Object.keys(USER_CARDS).join(', ')}`); continue; }
+    const effective = userOf(requested, allDecks);
+    // a saved deck has to keep its user's rule (the game's own checker); a start deck played with another user is allowed, with a warning when it is not a deck that user may build
+    const cards = deck ? Object.fromEntries(deck.cards) : START_DECKS.find((d) => d.id === name).cards;
+    const checked = gameCheck(builder, { userId: effective, cards: Object.entries(cards) });
+    for (const error of checked.errors) (deck ? bad : warn).push(`${requested}: ${error}`);
+    specs.push(canonicalSpec(requested, allDecks));
   }
   if (bad.length > 0) { console.error(['decks that cannot be played:', ...bad.map((line) => `  ${line}`)].join('\n')); process.exit(2); }
+  if (warn.length > 0) console.error(['WARNING: start decks that are not legal for the user they are played with (played anyway):', ...warn.map((line) => `  ${line}`)].join('\n'));
+  decks = [...new Set(specs)];
+  users = Object.fromEntries(decks.map((spec) => [spec, userOf(spec, allDecks)]));
 }
 const env = await describeEnv({ gameDir, cpuSpecs: [cpuA, cpuB], limits, deckNames: decks, startIds: allDecks });
 
@@ -111,7 +127,7 @@ function gameRules(dir) {
   return { ruleVersion: /RULE_VERSION = '([^']+)'/.exec(versions)?.[1] ?? null, cardVersion: /CARD_VERSION = '([^']+)'/.exec(versions)?.[1] ?? null, firstTurnDraw };
 }
 const recordOut = typeof args.record === 'string'
-  ? { dir: path.resolve(args.record), text: Boolean(args['record-text']), header: oreHeader({ game: { commit: env.key.game.commit, variant: env.info.game?.variant ?? null }, rules: gameRules(gameDir), cpus: { a: cpuA, b: cpuB }, shadow: typeof args.shadow === 'string' ? args.shadow : null, envId: env.id }) }
+  ? { dir: path.resolve(args.record), text: Boolean(args['record-text']), header: oreHeader({ game: { commit: env.key.game.commit, variant: env.info.game?.variant ?? null }, rules: gameRules(gameDir), cpus: { a: cpuA, b: cpuB }, shadow: typeof args.shadow === 'string' ? args.shadow : null, ...(Object.values(users).some((u) => u !== 'doors_zx') ? { users: { default: 'doors_zx', byDeck: users } } : {}), envId: env.id }) }
   : null;
 
 // The table. A job id is a stable name: it is also the match id the game sees.
@@ -173,7 +189,7 @@ if (typeof args['llm-config'] === 'string' && args.shadow === 'llm') {
 const previous = existsSync(envFile) ? JSON.parse(readFileSync(path.join(outDir, 'config.json'), 'utf8')) : null;
 writeFileSync(envFile, JSON.stringify(env, null, 2));
 writeFileSync(path.join(outDir, 'config.json'), JSON.stringify({
-  cpuA, cpuB, swap, seeds, decks, limits, shard, workers, game: { ...env.info.game, commit: env.key.game.commit, dirty: env.key.game.dirty }, node: process.version,
+  cpuA, cpuB, swap, seeds, decks, ...(Object.values(users).some((u) => u !== 'doors_zx') ? { users } : {}), limits, shard, workers, game: { ...env.info.game, commit: env.key.game.commit, dirty: env.key.game.dirty }, node: process.version,
   envId: env.id, machine: { ...env.info.machine, platform: env.info.platform },
   jobs: wanted.length, startedAt: previous?.startedAt ?? new Date().toISOString(), resumes: [...(previous?.resumes ?? []), ...(previous ? [new Date().toISOString()] : [])]
 }, null, 2));

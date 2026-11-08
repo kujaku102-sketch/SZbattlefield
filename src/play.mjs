@@ -1,7 +1,7 @@
 // Plays one match between two CPUs through the same local runtime port the game's own AI match uses, and measures it.
 import { createTrace } from './trace.mjs';
 import { createStyle } from './style.mjs';
-import { deckOptions } from './decks.mjs';
+import { deckOptions, userOf } from './decks.mjs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -67,7 +67,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
   const note = (type, detail) => { if (anomalies.length < 20) anomalies.push({ type, ...detail }); };
   const started = process.hrtime.bigint();
   const result = {
-    job: job.id, seed: job.seed, decks: { 'seat-a': job.deckA, 'seat-b': job.deckB }, cpus: job.cpus,
+    job: job.id, seed: job.seed, decks: { 'seat-a': job.deckA, 'seat-b': job.deckB }, users: { 'seat-a': userOf(job.deckA, startIds), 'seat-b': userOf(job.deckB, startIds) }, cpus: job.cpus,
     status: 'error', firstSeat: null, outcome: null, turns: null, commands: 0, anomalies, wallMs: 0, hash: null,
     choose: [], planning: [], queryMs: [], submitMs: []
   };

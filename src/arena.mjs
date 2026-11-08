@@ -26,6 +26,7 @@ const overall = tally(); const bySeat = { 'seat-a': tally(), 'seat-b': tally() }
 const byDeckA = Object.fromEntries(decksA.map((d) => [d, tally()])); const byDeckB = Object.fromEntries(decksA.map((d) => [d, tally()]));
 const matrix = Object.fromEntries(decksA.map((d) => [d, Object.fromEntries(decksA.map((e) => [e, tally()]))]));
 const deckOrder = Object.fromEntries(decksA.map((d) => [d, { first: tally(), second: tally() }]));
+const byUserA = {}; const byUserB = {};     // by the user card each side played (rows made before the user was part of the table: doors_zx)
 const status = {}; let anomalies = 0; const anomalyKinds = {};
 const own = { own: 0, baseline: 0, why: {} };
 const turns = []; const excluded = [];
@@ -38,6 +39,7 @@ for (const row of rows) {
   const result = row.outcome?.kind === 'win' ? (row.outcome.winnerSeat === aSeat ? 'w' : 'l') : 'd';
   const deckOfA = row.decks[aSeat]; const deckOfB = row.decks[bSeat];
   add(overall, result); add(bySeat[aSeat], result); add(byDeckA[deckOfA], result); add(byDeckB[deckOfB], result); add(matrix[deckOfA][deckOfB], result);
+  add(byUserA[row.users?.[aSeat] ?? 'doors_zx'] ??= tally(), result); add(byUserB[row.users?.[bSeat] ?? 'doors_zx'] ??= tally(), result);
   const order = row.firstSeat === aSeat ? 'first' : 'second';
   add(byOrder[order], result); add(deckOrder[deckOfA][order], result);
   turns.push(row.turns);
@@ -71,6 +73,14 @@ line(`## Deck of A (rows) against deck of B (columns): ${A}'s result`);
 line(`| | ${decksA.join(' | ')} |`); line(`|---|${decksA.map(() => '---').join('|')}|`);
 for (const d of decksA) line(`| ${d} | ${decksA.map((e) => cell(matrix[d][e])).join(' | ')} |`);
 line();
+// only when a user other than doors_zx played (a table of start decks has no such section)
+const usersPlayed = Object.keys(byUserA).length > 1 || Object.keys(byUserB).length > 1 || Object.keys(byUserA)[0] !== 'doors_zx' || Object.keys(byUserB)[0] !== 'doors_zx';
+if (usersPlayed) {
+  line(`## By the user card A played (rows), and by the user card B played`);
+  line(`| user | result for ${A} when A played it | result for ${A} when B played it |`); line('|---|---|---|');
+  for (const user of [...new Set([...Object.keys(byUserA), ...Object.keys(byUserB)])].sort()) line(`| ${user} | ${cell(byUserA[user] ?? tally())} | ${cell(byUserB[user] ?? tally())} |`);
+  line();
+}
 const decisions = own.own + own.baseline;
 if (decisions > 0) {
   line(`## What ${A} decided itself`);
@@ -81,5 +91,5 @@ const sorted = [...turns].sort((a, b) => a - b);
 line(`turns of a finished match: median ${sorted[sorted.length >> 1]}, mean ${(sorted.reduce((a, b) => a + b, 0) / sorted.length).toFixed(2)}, max ${sorted.at(-1)}`);
 if (excluded.length) line(`not counted (not finished): ${excluded.slice(0, 10).join(', ')}${excluded.length > 10 ? ' ...' : ''}`);
 writeFileSync(path.join(dir, 'arena.md'), `${out.join('\n')}\n`);
-writeFileSync(path.join(dir, 'arena.json'), JSON.stringify({ A, B, overall, bySeat, byOrder, byDeckA, byDeckB, matrix, deckOrder, decisions: own, status, anomalies, anomalyKinds }, null, 2));
+writeFileSync(path.join(dir, 'arena.json'), JSON.stringify({ A, B, overall, bySeat, byOrder, byDeckA, byDeckB, matrix, deckOrder, ...(usersPlayed ? { byUserA, byUserB } : {}), decisions: own, status, anomalies, anomalyKinds }, null, 2));
 console.log(out.join('\n'));
