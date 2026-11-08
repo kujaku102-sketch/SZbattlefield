@@ -1,4 +1,4 @@
-// FROZEN COPY for generation 2 (cpus/release/gen2.mjs): cpus/learned/features.mjs (features v4) at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
+// FROZEN COPY for generation 2 (cpus/release/gen2/beatZIG.mjs): cpus/learned/features.mjs (features v4) at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
 // Features of a decision, for the CPUs that learn from a teacher (forgehammer) and for the recorder that gathers the teacher's decisions.
 // ONE place: the recorder (harness side) and the learned CPU both call these functions, so what is learned and what is run cannot drift apart.
 // FEATURE_VERSION and the name lists go into every record header and every generated CPU.

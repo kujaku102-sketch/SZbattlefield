@@ -1,12 +1,12 @@
-// Generation 1 of the learned CPU (a finished one, kept in the repository on purpose; see gen1.json for what it was learned from and how it was measured).
+// beatZIG gen1: generation 1 of the learned CPU, the beatZIG line (a finished one, kept in the repository on purpose; see beatZIG.json for what it was learned from and how it was measured).
 // Learned for the game rules of b8214a6 (rule version 2.0-public-staging.19, first player draws 0 on turn 1): learn it again when the rules change.
 // Forged by forgehammer (packages/forge): a one-weight-vector CPU. Do not edit; forge it again.
 // weights 1f4f765db772c312; learned from 24911 decisions of {"a":"lookahead","b":"lookahead"}; softmax, target chosen, why all.
 // validation (whole matches kept apart): top-1 65.4% on 4905 decisions.
-import { learnedCpu } from './gen1/policy.mjs';
+import { learnedCpu } from './beatZIG/policy.mjs';
 
 export default learnedCpu({
-  id: 'gen1',
+  id: 'beatZIG-gen1',
   featureVersion: 3,
   featureNames: ["type_install","type_recoverRegistry","type_activateScript","type_activateAbility","type_endTurn","type_attack","type_executeCard","type_setScript","type_redeploy","type_executeSpell","type_activateCardEffect","type_other","cost","afford","cost_frac","mem_left","atk","hp","atk_hp","is_ob","is_sp","is_code","is_script","has_text","kw_QA","kw_SECURITY","kw_CONTACT","kw_HACKING","kw_ENCRYPTION","kw_PROTECT","kw_BACKUP","kw_LOGIN","kw_LOGOUT","kw_RESIDENT","kw_UPDATE","kw_RESPONSE","kw_PROXY","kw_DECOY","layers","dest_front","dest_back","dest_host","front_free","atk_user","atk_ob","a_atk","a_hp","t_atk","t_hp","kills","dies","dmg_frac","lethal","crosses","tgt_own","tgt_foe","end_x_memleft","end_x_ready","end_x_playable","atk_x_strdiff","atk_x_oppasleep","place_x_boarddiff","place_x_hand","cost_rank","n_cands","max_afford_cost","used_n","moves_done","end_x_moves","end_x_untried","entry_open","type_baseline","unsupported_n","base_x_memory","base_x_hand"],
   weights: [0.753934102, -3.23058667, 2.58980108, 2.67107513, -2.46825592, 1.1577322, -1.81817858, -0.613952708, -2.02662462, -0.769390074, 0, 4.60444356, 0.309556383, 0.814559476, 0.65561075, 1.87127567, 2.49968043, 0.0818593912, 1.3043888, -0.00694476706, 1.17722539, -1.43882379, 1.25427079, 0.180470284, 0.178909527, -0.402695587, 0.0810342818, -0.880006181, -0.3756526, 0.966579002, 0, -0.0215554975, -0.045757088, 0.234100032, 0, 0, 0, 0.0110402091, -0.281629121, 6.20077118, 0.308911626, -6.3488473, 0.805827267, 2.57422907, -1.96977704, 4.62366202, -4.54266677, 2.45572713, -1.30727835, -0.454680408, -0.311543197, 3.36584101, -0.011037518, 3.44332654, -0.398897932, -0.73525092, -0.430747884, -0.537615455, -2.31986026, -0.487305556, -0.823317809, 0.537581888, -0.0974132156, 0.53801786, -0.00000149788504, -0.104218498, -0.672637963, 2.2590606, 2.94058889, -6.02127412, 0, 0.859497512, 0.59187185, 4.59885487, -5.78199203],

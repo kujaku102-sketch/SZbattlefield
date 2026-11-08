@@ -1,4 +1,4 @@
-// FROZEN COPY for generation 1 (cpus/release/gen1.mjs): the file cpus/learned/policy.mjs as it was at commit e662c15 (features v3). Do not edit and do not follow changes of cpus/learned/: gen1 must play the same for ever. For a new generation, copy again.
+// FROZEN COPY for lightZIG gen2 (cpus/release/gen2/lightZIG.mjs): the file at commit 8aa4ce8 (the same as the copy beatZIG gen2 has). Do not edit and do not follow changes elsewhere: lightZIG gen2 must play the same for ever.
 // The CPU that a forged weight vector makes (forgehammer's smith writes a small cpus/forged-<name>.mjs that calls `learnedCpu` with the weights).
 //
 // It needs only what the game's own CPU needs: the seat's query and the planner of its own port (queryAction). It does not look ahead and has no sim.
@@ -14,21 +14,22 @@
 import { candidateFeatures, decisionContext, decisionFeatures, entryCandidates, FEATURE_VERSION, CAND_NAMES, STATE_NAMES, queryView } from './features.mjs';
 import { buildCandidates, completeCandidate, planEntry } from './candidates.mjs';
 import { createLoopGuard } from './loopguard.mjs';
+import { baseOf, netFromWeights, scoreCandidate } from './mlp.mjs';
 
 const REPEAT_LIMITED = new Set(['redeploy', 'activateCardEffect']);
 const MOVES_PER_TURN = 40;
 // What the seat sees, without the revision: if it is the same after a move, the move changed nothing.
 const looks = (query) => { const { revision, ...rest } = query.observation ?? {}; return JSON.stringify(rest); };
-const dot = (W, f) => { let z = 0; for (let j = 0; j < f.length; j += 1) z += W[j] * f[j]; return z; };
+const dot = (W, f, n = f.length) => { let z = 0; for (let j = 0; j < n; j += 1) z += W[j] * f[j]; return z; };
 const histKeyOf = (action) => `${action.type}:${action.cardRef ?? action.attackerRef ?? ''}`;
 const CHOICES = new Set(['answerChoice', 'declineChoice', 'keepOpeningHand', 'openingMulligan']);
 
 // crossing (forgehammer src/cross.mjs): the features after the first CAND_NAMES.length are the products candidate[row] * state[col], row a and column b at F + a * C + b
-export function crossOf(cross) {
+export function crossOf(cross, base = CAND_NAMES.length) {
   if (!cross) return null;
   const rows = cross.rows.map((name) => CAND_NAMES.indexOf(name)); const cols = cross.cols.map((name) => STATE_NAMES.indexOf(name));
   if (rows.some((j) => j < 0) || cols.some((j) => j < 0)) throw new Error('the cross of this CPU has a name this build does not');
-  return { rows, cols, base: CAND_NAMES.length };
+  return { rows, cols, base };
 }
 const crossDot = (W, f, state, cross) => {
   let z = 0; const C = cross.cols.length;
@@ -41,25 +42,31 @@ const crossDot = (W, f, state, cross) => {
 };
 
 // flat: scores of a decision
-export function scoreDecision(query, queryAction, W, history, cross = null) {
+export function scoreDecision(query, queryAction, W, history, cross = null, nBase = CAND_NAMES.length, net = null) {
   const built = buildCandidates(query, queryAction);
   const features = decisionFeatures(query, built, history, { withEntries: false });
-  return { built, features, scores: features.cands.map((f) => dot(W, f) + (cross ? crossDot(W, f, features.state, cross) : 0)) };
+  if (net) { const base = baseOf(net, features.state); return { built, features, scores: features.cands.map((f) => scoreCandidate(net, base, f)) }; }
+  return { built, features, scores: features.cands.map((f) => dot(W, f, nBase) + (cross ? crossDot(W, f, features.state, cross) : 0)) };
 }
 
-export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, meta = {} }) {
-  if (featureVersion !== FEATURE_VERSION || featureNames.length !== CAND_NAMES.length || featureNames.some((name, i) => name !== CAND_NAMES[i])) {
+export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, mlp = null, topk = null, meta = {} }) {
+  // a CPU made for an older, shorter list of features reads that list (the new features come after it and weigh nothing for it)
+  if (featureVersion > FEATURE_VERSION || featureNames.length > CAND_NAMES.length || featureNames.some((name, i) => name !== CAND_NAMES[i])) {
     throw new Error(`${id}: made for features v${featureVersion} (${featureNames.length}), this build has v${FEATURE_VERSION} (${CAND_NAMES.length}); forge it again`);
   }
+  const nBase = featureNames.length;
   const W = Float64Array.from(weights ?? []);
-  const cross = crossOf(crossSpec);
+  const cross = crossOf(crossSpec, nBase);
+  const net = mlp ? netFromWeights(mlp) : null;
+  if (net && net.F !== CAND_NAMES.length) throw new Error(`${id}: the network was made for ${net.F} features, this build has ${CAND_NAMES.length}; forge it again`);
   const staged = entryWeights !== null;
   const WE = staged ? Float64Array.from(entryWeights) : null;
   const WO = staged ? Float64Array.from(optionWeights) : null;
   return {
-    id, needsBaseline: true, meta,
+    id, needsBaseline: true, needsSim: Boolean(topk), meta,
     create() {
       let last = { revision: -1 };
+      const reader = topk ? topk.fresh() : null;
       let turn = null;
       let pending = null;
       const noEffect = new Set();
@@ -67,6 +74,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
       const loopGuard = createLoopGuard();                       // what this CPU does not do: repeat a process that changes nothing, on the same board in one turn (cpus/learned/loopguard.mjs)
       let board = '';
       const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0, planCalls: 0, turnEndedByLimit: 0, windowsChanged: 0, loopUnavoidable: 0 };
+      if (reader) counters.topk = reader.stats;
       const hand = (key, query, result) => {
         pending = { key, looks: looks(query), revision: query.status.revision, histKey: result?.ok ? histKeyOf(result.value.action) : null, choice: Boolean(result?.ok && CHOICES.has(result.value.action.type)) };
         return result;
@@ -91,7 +99,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
       };
       const blocked = (type, cardRef, key) => type !== 'endTurn' && (noEffect.has(key) || (REPEAT_LIMITED.has(type) && (history.used.get(`${type}:${cardRef ?? ''}`) ?? 0) >= 1));
       return {
-        needsBaseline: true, counters,
+        needsBaseline: true, needsSim: Boolean(topk), counters,
         choose(view) {
           const { query, queryAction } = view;
           const revision = query.status?.revision;
@@ -110,15 +118,18 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             return hand(key, query, { ok: true, value: { commandId: view.commandId, expectedRevision: revision, action } });
           };
           if (!staged) {
-            const { built, scores } = scoreDecision(query, queryAction, W, history, cross);
+            const { built, scores } = scoreDecision(query, queryAction, W, history, cross, nBase, net);
             counters.planCalls += built.planCalls;
-            let best = -1; let bestScore = -Infinity;
+            let best = -1; let bestScore = -Infinity; const eligible = [];
             for (let i = 0; i < scores.length; i += 1) {
               const candidate = built.cands[i];
               if (tooMany && candidate?.type !== 'endTurn') continue;
               if (candidate && blocked(candidate.type, candidate.cardRef, `own:${candidate.sig}`)) continue;
+              eligible.push(i);
               if (scores[i] > bestScore) { bestScore = scores[i]; best = i; }
             }
+            // a reader looks at the best few by score (cpus/topk-core.mjs) and may choose another of them
+            if (topk && best >= 0 && view.sim) { const picked = reader.pick({ sim: view.sim, built, scores, eligible }); if (picked !== null) best = picked; }
             if (best < 0 || best >= built.cands.length) return fallback(view, scores.length === 0 ? 'no-candidate' : 'learned-baseline');
             const action = completeCandidate(query, built.cands[best], queryAction);
             if (!action) return fallback(view, 'plan-refused');
@@ -133,7 +144,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             const e = entries[i];
             if (tooMany && e.type !== 'endTurn') continue;
             if (blocked(e.type, e.cardRef, `own:${e.type}|${e.cardRef ?? ''}`)) continue;
-            const z = dot(WE, candidateFeatures(ctx, e));
+            const z = dot(WE, candidateFeatures(ctx, e), nBase);
             if (z > bestScore) { bestScore = z; best = i; }
           }
           if (best < 0) return fallback(view, 'no-candidate');
@@ -147,7 +158,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             let ob = -Infinity;
             for (const candidate of planned.cands) {
               if (noEffect.has(`own:${candidate.sig}`)) continue;
-              const z = dot(WO, candidateFeatures(octx, candidate));
+              const z = dot(WO, candidateFeatures(octx, candidate), nBase);
               if (z > ob) { ob = z; pick = candidate; }
             }
           }

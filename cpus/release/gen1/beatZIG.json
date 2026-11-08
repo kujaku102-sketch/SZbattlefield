@@ -1,6 +1,10 @@
 {
-  "name": "gen1",
-  "file": "cpus/release/gen1.mjs",
+  "name": "beatZIG gen1",
+  "id": "beatZIG-gen1",
+  "line": "beatZIG",
+  "generation": 1,
+  "file": "cpus/release/gen1/beatZIG.mjs",
+  "movedFrom": "Until 2026-11-09 this CPU was cpus/release/gen1.mjs (named gen1) with gen1.json and the parts in cpus/release/gen1/. Only the names and the places changed: the weights, the features and the way it chooses did not.",
   "what": "Generation 1 of the learned CPU: one linear scorer over the candidates of a decision (flat), learned from a looking-ahead CPU's decisions, including the moves it left to the game's own CPU, with each decision weighted by how the match went (flat-all-value).",
   "weights": {
     "digest": "1f4f765db772c312",
@@ -81,14 +85,18 @@
     }
   },
   "playsOnly": "what the seat can see: its own query (the observation and its legal actions). No look-ahead, no sim, no hidden information.",
+  "module": {
+    "sha256": "a3d13d8dcd41a04748bf22242469573efaaffda0286c28e346066a66c22d2983"
+  },
   "frozenCode": {
-    "note": "gen1.mjs imports only these copies (cpus/release/gen1/), taken from cpus/learned/ at commit e662c15 (features v3). Changing cpus/learned/ does not change how gen1 plays. sha256 of each file with line endings read as LF; `all` = sha256 of the four hashes in this order.",
+    "note": "The CPU module imports only the copies in its own folder; cpus/learned/ and the others may change without changing how it plays. sha256 of each file with line endings read as LF; all = sha256 of the hashes in the order listed.",
     "files": {
-      "candidates.mjs": "07e63bff05d3d539b3ede8195873e150b1b6e0e7865c2e15035d440cc1863a36",
-      "features.mjs": "f8107d808c7d0a7b26cc3f70bb5b611589b427c4a6c847bf0b04eb084a763c66",
-      "loopguard.mjs": "1698072f74e0483f4102b85fd80eaae2ea1f9c29720461acad8510a81d1bb581",
-      "policy.mjs": "02e089515437d12cc161a3c057c7927ef0885f08dc00e6189a3f8ce127167d2d"
+      "candidates.mjs": "ee4ae1b559637d8d1bf88a96cd6fc5746905634ca01567eca83890d3a558f025",
+      "features.mjs": "243c9c32c0f979b1a07774e5ec55181f01000b267a934075f5c7aee789527d14",
+      "loopguard.mjs": "1aa418187d32c5eaa4fabd60f7f5a64e3453b31af19d8c352a525df481b5dabe",
+      "policy.mjs": "aaac00369028e44dc4d57a4eadf932ddccdddcc1d90cda328aab77e9a53ef157"
     },
-    "all": "40af1eb727240b3a3c9df70a4150b35a4647c51489057d3c468f8767b2c889e2"
+    "all": "9e6677b17b70d220c69f931397d01fd926b819788e5fbf1bd6678ef8df1c2c11",
+    "takenAt": "commit e662c15"
   }
 }

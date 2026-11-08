@@ -1,0 +1,180 @@
+{
+  "name": "beatZIG gen2",
+  "id": "beatZIG-gen2",
+  "line": "beatZIG",
+  "generation": 2,
+  "file": "cpus/release/gen2/beatZIG.mjs",
+  "movedFrom": "Until 2026-11-09 this CPU was cpus/release/gen2.mjs (named gen2), with its parts in cpus/release/gen2/. Only the names and the places changed.",
+  "what": "The beatZIG line, generation 2: a small network (features v4, one hidden layer of 32) scores the moves; a reader (\"one\", k=2) looks at the two best by score on re-drawn states and picks the one whose state after the move is evaluated higher. Learned from a deep look-ahead CPU and a looking-ahead CPU, a language model (Haiku 5.5) on the hard decisions, and a person's marks on the model's moves.",
+  "module": {
+    "sha256": "0c768cde277811217fadd92e8176c9d6837f5833c6e12b49b0b3e0bd35622035"
+  },
+  "frozenCode": {
+    "note": "The CPU module imports only the copies in its own folder; cpus/learned/ and the others may change without changing how it plays. sha256 of each file with line endings read as LF; all = sha256 of the hashes in the order listed.",
+    "files": {
+      "candidates.mjs": "96f3ec6c5cda5aeaba7467549ac4742c9e72ddc904960a46e8ace8ae79c3674a",
+      "eval.mjs": "2301daf3b481db85077883a2fee14298c3480719135c4e974f7934e5dbf719e8",
+      "features.mjs": "bbf34ea88e03aa687ca8694e5857d31b8d70899d248db01d787b49640aaca663",
+      "loopguard.mjs": "d683a3646c83a1bf712a462a1a1b1e7930c6bf8225b0ec3ee46194e50e3bb647",
+      "mlp.mjs": "adf47997088c2ae29b0d7fb9280fb458ca702cdec0c79eaf4ba704c42807f2cf",
+      "playout.mjs": "38bef872fa78c1cf200077d1d7699e5be60577a7f611c3145bdc0752601557cb",
+      "policy.mjs": "0117a4a631edb68d5fa82f9cc2215714689ee1969ed59c81bfc8011618891ea2",
+      "topk-core.mjs": "d5c150263f0b08e0d7653bc616a3270cce621f381ce3276a53a2abb1956306a6"
+    },
+    "all": "04f08ac3e9224a3553799aa89d4681aac0de69cfe564826fffe471aca40c3e1a",
+    "takenAt": "commit 8aa4ce8"
+  },
+  "weights": {
+    "digest": "c61120e4a11b565e",
+    "featureVersion": 4,
+    "candidateFeatures": 120,
+    "stateFeatures": 30,
+    "network": {
+      "hidden": 32,
+      "baseLinear": false,
+      "note": "z = lin.phi + v.relu(W1.phi + U1.s + b1)"
+    }
+  },
+  "reader": {
+    "kind": "one",
+    "k": 2,
+    "samples": 2,
+    "note": "the state right after the move, evaluated (gen2/beatZIG/eval.mjs: a hand-made evaluation, not learned), averaged over 2 re-drawn states; a move the sim cannot play (a spell, an effect) is played as it is when it is the best by score"
+  },
+  "learnedFor": {
+    "note": "The rules the data was played under. When the game's rules change (the first-turn draw, a card, a rule version), the data and this CPU are of the old rules: learn it again.",
+    "game": "b8214a6dd3dd5b9379138e64ba1d3814209a5455",
+    "ruleVersion": "2.0-public-staging.19",
+    "cardVersion": "beta0.9.2-cards.11",
+    "firstTurnDraw": {
+      "first": 0,
+      "second": 2
+    }
+  },
+  "learnedFrom": {
+    "matches": 2049,
+    "decisionsRecorded": 98307,
+    "decisionsLearnedFrom": 85838,
+    "validation": {
+      "top1": 0.741,
+      "decisions": 17405,
+      "note": "whole matches kept apart (20%); the share of decisions where the CPU's best move is the teacher's"
+    },
+    "records": [
+      {
+        "teacher": "deep (the best few moves played out through the rest of the turn and the other side's turn)",
+        "matches": 294,
+        "what": "deep against simple, both seat orders, every pair of the 7 start decks, seeds 301-303"
+      },
+      {
+        "teacher": "lookahead (one move ahead)",
+        "matches": 735,
+        "what": "lookahead against lookahead and against simple, seeds 101-105"
+      },
+      {
+        "teacher": "lookahead",
+        "matches": 980,
+        "what": "a student CPU against simple and lookahead, both seat orders, seeds 401-405; every decision of the student labelled by lookahead"
+      },
+      {
+        "teacher": "Haiku 5.5 (hard decisions only: installs, executions, what lookahead leaves to the game's CPU)",
+        "matches": 40,
+        "what": "the 40 matches picked out of the 980 (lost, many differences, weak decks, many moves the sim cannot read); 759 calls, $0.414; each answer weighted by a machine judgement of which move is worth more"
+      },
+      {
+        "teacher": "a person (指揮, for 文豪)",
+        "marks": 80,
+        "what": "adopted 29 (the model's move taken), corrected to the right move 12, the teacher's move taken 39"
+      }
+    ],
+    "method": {
+      "loss": "softmax over the candidates of a decision",
+      "model": "network, hidden 32",
+      "advantage": "value",
+      "beta": 1,
+      "epochs": 25,
+      "lr": 0.01,
+      "l2": 0.0001,
+      "seed": 1,
+      "sourceWeights": {
+        "lookahead": 1,
+        "llm-judge-llm": 2,
+        "llm-judge-lookahead": 0,
+        "llm-judge-tie": 1,
+        "llm-judge-unknown": 0.5,
+        "llm-single": 0.5
+      },
+      "markWeights": {
+        "adopt": 3,
+        "correct": 4,
+        "rule": 6,
+        "teacher": 2
+      }
+    }
+  },
+  "evaluation": {
+    "note": "Strength = the share of matches won, both seat orders, every pair of start decks, game b8214a6; 95% range: Wilson. Measured with the file under the name cpus/release/gen2.mjs, before it moved here (the same measure again under the final name: 288-202 against gen1): the reader's re-drawn states follow the match name, so under another file name some matches play out differently (1 of 49 in a check under the final name), the strength is the same.",
+    "vsGen1": {
+      "seeds": "1-5",
+      "matches": 490,
+      "win": 0.588,
+      "range95": [
+        0.544,
+        0.63
+      ],
+      "wins": 288,
+      "losses": 202,
+      "draws": 0,
+      "opponent": "gen1 (now beatZIG gen1)"
+    },
+    "vsSimple": {
+      "seeds": "1-10",
+      "matches": 980,
+      "win": 0.703,
+      "range95": [
+        0.674,
+        0.731
+      ],
+      "wins": 689,
+      "losses": 291,
+      "draws": 0
+    },
+    "vsLookahead": {
+      "seeds": "1-5",
+      "matches": 490,
+      "win": 0.496,
+      "range95": [
+        0.452,
+        0.54
+      ],
+      "wins": 243,
+      "losses": 247,
+      "draws": 0
+    },
+    "firstMeasure": {
+      "vsGen1": {
+        "seeds": "1-5",
+        "matches": 490,
+        "win": 0.59,
+        "range95": [
+          0.546,
+          0.632
+        ],
+        "wins": 289,
+        "losses": 201,
+        "note": "the same CPU under the name cpus/forged-g2-one2.mjs, when it was picked"
+      }
+    },
+    "repeatability": "In a clean clone of the commit that froze it (nothing uncommitted), with cpus/learned/ (policy, network, loop guard) and cpus/topk-core.mjs deliberately broken, it played 98 matches against gen1 (seed 1, both orders) identically to the measurement it was picked by: 98/98. After the move to this place, played again under the old names (temporary wrappers): 98 of 98 identical to the first measurement (the temporary wrappers imported the parts from this place)."
+  },
+  "timePerDecision": {
+    "note": "choose() of the CPU, with the reader; the CPU against itself, a quiet machine, 12 matches; the time includes the bench opening the sim (re-drawing the hidden cards), which a device would do in its own way. Milliseconds.",
+    "median": 20.1,
+    "p95": 52,
+    "p99": 62,
+    "max": 73,
+    "mean": 20.8,
+    "readerPerRead": 10
+  },
+  "playsOnly": "what the seat can see (its own query) and the states the reader re-draws of what it cannot see; no hidden information of the other side."
+}

@@ -1,4 +1,4 @@
-// FROZEN COPY for generation 2 (cpus/release/gen2.mjs): cpus/topk-core.mjs at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
+// FROZEN COPY for generation 2 (cpus/release/gen2/beatZIG.mjs): cpus/topk-core.mjs at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
 // The learned CPU narrows the moves by its own score, and a reader looks at the best few: "the top k by the network, read ahead".
 //
 //   makeTopk({ k, reader, samples, own, opp }) -> { pick({ sim, built, scores, eligible }) -> the index of the candidate to play, or null (keep the best by score), stats }

@@ -1,14 +1,14 @@
-// Generation 2 of the learned CPU (a finished one, kept in the repository on purpose; see gen2.json for what it was learned from and how it was measured).
+// beatZIG gen2: generation 2 of the learned CPU, the beatZIG line (a finished one, kept in the repository on purpose; see beatZIG.json for what it was learned from and how it was measured).
 // A small network (one hidden layer of 32) scores the moves; a reader looks at the best 2 by score on re-drawn states (the state after the move, evaluated) and picks the better.
 // Learned for the game rules of b8214a6 (rule version 2.0-public-staging.19, first player draws 0 on turn 1): learn it again when the rules change.
 // Forged by forgehammer (packages/forge): a one-weight-vector CPU. Do not edit; forge it again.
 // weights c61120e4a11b565e; learned from 85838 decisions of {"a":"deep","b":"simple"}; mlp, target ?, why all.
 // validation (whole matches kept apart): top-1 74.1% on 17405 decisions.
-import { learnedCpu } from './gen2/policy.mjs';
-import { makeTopk } from './gen2/topk-core.mjs';
+import { learnedCpu } from './beatZIG/policy.mjs';
+import { makeTopk } from './beatZIG/topk-core.mjs';
 
 export default learnedCpu({
-  id: 'gen2',
+  id: 'beatZIG-gen2',
   featureVersion: 4,
   featureNames: ["type_install","type_recoverRegistry","type_activateScript","type_activateAbility","type_endTurn","type_attack","type_executeCard","type_setScript","type_redeploy","type_executeSpell","type_activateCardEffect","type_other","cost","afford","cost_frac","mem_left","atk","hp","atk_hp","is_ob","is_sp","is_code","is_script","has_text","kw_QA","kw_SECURITY","kw_CONTACT","kw_HACKING","kw_ENCRYPTION","kw_PROTECT","kw_BACKUP","kw_LOGIN","kw_LOGOUT","kw_RESIDENT","kw_UPDATE","kw_RESPONSE","kw_PROXY","kw_DECOY","layers","dest_front","dest_back","dest_host","front_free","atk_user","atk_ob","a_atk","a_hp","t_atk","t_hp","kills","dies","dmg_frac","lethal","crosses","tgt_own","tgt_foe","end_x_memleft","end_x_ready","end_x_playable","atk_x_strdiff","atk_x_oppasleep","place_x_boarddiff","place_x_hand","cost_rank","n_cands","max_afford_cost","used_n","moves_done","end_x_moves","end_x_untried","entry_open","type_baseline","unsupported_n","base_x_memory","base_x_hand","fx_draw","fx_damage","fx_self_damage","fx_heal","fx_destroy","fx_buff","fx_mem_up","fx_mem_cost","fx_access","fx_decode","fx_drag","fx_discard","fx_ban","fx_generate","fx_sleep","fx_guard","fx_registry","fx_trash","fx_to_hand","fx_mount","fx_all","fx_t_login","fx_t_logout","fx_t_update","fx_t_response","fx_t_if","fx_t_turn","fx_dmg_amt","fx_draw_amt","fx_draw_front","fx_draw_back","fx_damage_front","fx_damage_back","fx_destroy_front","fx_destroy_back","fx_buff_front","fx_buff_back","fx_guard_front","fx_guard_back","fx_sleep_front","fx_sleep_back","fx_generate_front","fx_generate_back","fx_access_front","fx_access_back"],
   weights: [],

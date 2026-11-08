@@ -1,4 +1,4 @@
-// FROZEN COPY for generation 2 (cpus/release/gen2.mjs): cpus/learned/loopguard.mjs at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
+// FROZEN COPY for generation 1 (cpus/release/gen1/beatZIG.mjs): the file cpus/learned/loopguard.mjs as it was at commit e662c15 (features v3). Do not edit and do not follow changes of cpus/learned/: gen1 must play the same for ever. For a new generation, copy again.
 // What a CPU does not do: repeat a process that changes nothing, in the same turn on the same board. (The rule of the game allows it; a machine that repeats it for ever is
 // the trouble. A person's moves are not restricted.) This file is the prohibition for the answers to windows; the moves of the main phase have their own (a move that was
 // accepted and changed nothing is not chosen again in the same turn: cpus/lookahead.mjs, cpus/learned/policy.mjs).

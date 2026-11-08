@@ -1,4 +1,4 @@
-// FROZEN COPY for generation 1 (cpus/release/gen1.mjs): the file cpus/learned/features.mjs as it was at commit e662c15 (features v3). Do not edit and do not follow changes of cpus/learned/: gen1 must play the same for ever. For a new generation, copy again.
+// FROZEN COPY for lightZIG gen2 (cpus/release/gen2/lightZIG.mjs): the file at commit 8aa4ce8 (the same as the copy beatZIG gen2 has). Do not edit and do not follow changes elsewhere: lightZIG gen2 must play the same for ever.
 // Features of a decision, for the CPUs that learn from a teacher (forgehammer) and for the recorder that gathers the teacher's decisions.
 // ONE place: the recorder (harness side) and the learned CPU both call these functions, so what is learned and what is run cannot drift apart.
 // FEATURE_VERSION and the name lists go into every record header and every generated CPU.
@@ -16,10 +16,28 @@
 // `history` is what the seat itself has done earlier in this turn: { moves, used: Map(`${type}:${cardRef}` -> times) }. It is the seat's own record of its own
 // accepted moves, not something read from the game. `entries` are the same features for the legal actions before their options are known (one per entry of
 // query.legalActions, in order): a CPU that picks the entry first and only then asks for its options scores those.
-export const FEATURE_VERSION = 3;
+export const FEATURE_VERSION = 4;   // 4: what a card's text does (fx_*), after the first 3's features: a CPU made for 3 still reads its (shorter) list
 
 const KW = ['QA', 'SECURITY', 'CONTACT', 'HACKING', 'ENCRYPTION', 'PROTECT', 'BACKUP', 'LOGIN', 'LOGOUT', 'RESIDENT', 'UPDATE', 'RESPONSE', 'PROXY', 'DECOY'];
 const TYPES = ['install', 'recoverRegistry', 'activateScript', 'activateAbility', 'endTurn', 'attack', 'executeCard', 'setScript', 'redeploy', 'executeSpell', 'activateCardEffect', 'other'];
+// What a card's effect does, read from its text (what the seat's screen shows of the card), never from its name or number. A kind is 1 when the text has it.
+// (the order is part of the feature list: add at the end)
+const FX = Object.freeze([
+  ['draw', /引く/], ['damage', /ダメージ/], ['self_damage', /\d+ダメージ受ける|自分は\d+ダメージ/], ['heal', /回復/], ['destroy', /破壊/], ['buff', /[+\-＋－]\d+\/[+\-＋－]?\d+/],
+  ['mem_up', /メモリ上限を[+＋]/], ['mem_cost', /消費メモリ|実行メモリ|メモリを\d+消費/], ['access', /アクセス/], ['decode', /デコード/], ['drag', /ドラッグ/], ['discard', /捨て/],
+  ['ban', /BAN/], ['generate', /生成/], ['sleep', /スリープ/], ['guard', /プロテクト|バックアップ|ファイアウォール|暗号化|デコイ|セキュリティ/], ['registry', /レジストリ/],
+  ['trash', /ゴミ箱/], ['to_hand', /手札に加え/], ['mount', /マウント|レイヤー/], ['all', /すべて|全て/],
+  ['t_login', /\[ログイン\]/], ['t_logout', /\[ログアウト\]/], ['t_update', /アップデート/], ['t_response', /レスポンス/], ['t_if', /\[(if|条件)/], ['t_turn', /ターン(開始|終了)時/]
+]);
+const FX_PLACE = ['draw', 'damage', 'destroy', 'buff', 'guard', 'sleep', 'generate', 'access'];   // where the card is put matters for these: the same kinds again for the front and the back
+const amountOf = (text, pattern) => { let best = 0; for (const m of text.matchAll(pattern)) best = Math.max(best, Number(m[1]) || 0); return best; };
+const FX_CACHE = new Map();
+function fxOf(text) {
+  let v = FX_CACHE.get(text); if (v) return v;
+  v = { flags: FX.map(([, re]) => (re.test(text) ? 1 : 0)), dmgAmt: Math.min(1, amountOf(text, /(\d+)ダメージ/g) / 5), drawAmt: Math.min(1, amountOf(text, /(\d+)枚[^。]*引く/g) / 3) };
+  if (FX_CACHE.size < 1000) FX_CACHE.set(text, v);
+  return v;
+}
 const PLACING = new Set(['executeCard', 'setScript', 'redeploy', 'install']);
 
 export const STATE_NAMES = Object.freeze([
@@ -39,7 +57,9 @@ export const CAND_NAMES = Object.freeze([
   // what the seat has done this turn: this card's move done before, the turn's moves so far, and what is left to try (for ending the turn)
   'used_n', 'moves_done', 'end_x_moves', 'end_x_untried', 'entry_open',
   // the candidate that is no move of this list: what the game's own CPU does with the kinds of action the list has no candidate for
-  'type_baseline', 'unsupported_n', 'base_x_memory', 'base_x_hand'
+  'type_baseline', 'unsupported_n', 'base_x_memory', 'base_x_hand',
+  // what the card's text does (v4)
+  ...FX.map(([name]) => `fx_${name}`), 'fx_dmg_amt', 'fx_draw_amt', ...FX_PLACE.flatMap((k) => [`fx_${k}_front`, `fx_${k}_back`])
 ]);
 const IDX = Object.freeze(Object.fromEntries(CAND_NAMES.map((name, i) => [name, i])));
 
@@ -54,7 +74,7 @@ function cardView(card) {
   return {
     ref: card.cardRef, category: definition.category ?? null,
     cost: num(computed.currentCost ?? definition.cost), atk: num(computed.currentAtk ?? definition.atk), hp: Math.max(0, num(computed.currentStr ?? definition.str)),
-    hasText: text.length > 0 && text !== '(効果なし)', asleep: Boolean(status.sleep), sick: Boolean(status.summoningSick), faceDown: Boolean(card.faceDown),
+    fx: fxOf(String(text)), hasText: text.length > 0 && text !== '(効果なし)', asleep: Boolean(status.sleep), sick: Boolean(status.summoningSick), faceDown: Boolean(card.faceDown),
     keywords: new Set((computed.badges ?? []).map((badge) => badge.name)), layers: (card.mounted ?? []).length
   };
 }
@@ -148,6 +168,9 @@ export function candidateFeatures(ctx, c) {
     set('is_ob', card.category === 'Ob' ? 1 : 0); set('is_sp', card.category === 'Sp' ? 1 : 0);
     set('is_code', card.category === 'Code' ? 1 : 0); set('is_script', card.category === 'Script' ? 1 : 0);
     set('has_text', card.hasText ? 1 : 0);
+    FX.forEach(([name], i) => { if (card.fx.flags[i]) set(`fx_${name}`, 1); });
+    set('fx_dmg_amt', card.fx.dmgAmt); set('fx_draw_amt', card.fx.drawAmt);
+    if (c.zone === 'front' || c.zone === 'back') FX_PLACE.forEach((k) => { const i = FX.findIndex(([name]) => name === k); if (card.fx.flags[i]) set(`fx_${k}_${c.zone}`, 1); });
     KW.forEach((name) => { if (card.keywords.has(name)) set(`kw_${name}`, 1); });
     set('layers', card.layers / 3);
   }

@@ -1,4 +1,4 @@
-// FROZEN COPY for generation 2 (cpus/release/gen2.mjs): cpus/lookahead/playout.mjs at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
+// FROZEN COPY for generation 2 (cpus/release/gen2/beatZIG.mjs): cpus/lookahead/playout.mjs at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
 // A state played out: the rest of the seat's own turn, the end of it, the other side's turn and the end of that. Returns the evaluation (for the seat) of the state when that turn ends.
 //
 //   playout(sim, state, { weights, own, opp, margin }) -> number     (clamped to +-200: a decided game counts as a large number, not as an infinity)

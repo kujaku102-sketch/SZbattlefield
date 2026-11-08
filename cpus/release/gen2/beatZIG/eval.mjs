@@ -1,4 +1,4 @@
-// FROZEN COPY for generation 2 (cpus/release/gen2.mjs): cpus/lookahead/eval.mjs at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
+// FROZEN COPY for generation 2 (cpus/release/gen2/beatZIG.mjs): cpus/lookahead/eval.mjs at commit 8aa4ce8. Do not edit and do not follow changes elsewhere: gen2 must play the same for ever. For a new generation, copy again.
 // The evaluation of an engine state for one side. Generic: it reads numbers and zone sizes, never a card name or a card number.
 // It reads the engine state as the sim hands it out (determinized): players[me|opp].{fortressStr, memory, hand, front, back, registry, trash}.
 //
