@@ -6,7 +6,8 @@
 //
 // What is counted (the seat's OWN cards only: its hand, its registry, its executions; the other side's hand and deck are never looked at):
 //   came        the copies of the card that were in the seat's hand or registry at some point of the match (opening hand, draws, what it installed)
-//   executed    the executions of the card (executeCard, executeSpell, setScript); a card put on the board by another card's effect is not an execution
+//   executed    the executions of the card (executeCard, executeSpell, setScript, executeLayered, executeRegistry, mountCard); a card put on the board by another card's effect is not an execution
+//   activated   the activations of its effect or script once it is on the board (activateCardEffect, activateScript); not an execution, so a card activated many times can still be "left" if it never was executed
 //   left        the copies that came and were NEVER executed before the match ended (installed or held, and unused)
 // Columns:
 //   matches came / executed   matches (of the seat) in which at least one copy came / was executed
@@ -53,9 +54,9 @@ for (const dir of dirs) {
       const g = groups.get(key) ?? { matches: 0, wins: 0, cards: new Map() };
       const won = r.outcome?.kind === 'win' && r.outcome.winnerSeat === seat;
       g.matches += 1; if (won) g.wins += 1;
-      for (const [id, [came, executed, left]] of Object.entries(r.style[seat].cards)) {
-        const c = g.cards.get(id) ?? { cameMatches: 0, cameWins: 0, execMatches: 0, execWins: 0, came: 0, executed: 0, left: 0 };
-        c.came += came; c.executed += executed; c.left += left;
+      for (const [id, [came, executed, left, activated]] of Object.entries(r.style[seat].cards)) {
+        const c = g.cards.get(id) ?? { cameMatches: 0, cameWins: 0, execMatches: 0, execWins: 0, came: 0, executed: 0, left: 0, activated: 0 };
+        c.came += came; c.executed += executed; c.left += left; c.activated += activated ?? 0;
         if (came > 0) { c.cameMatches += 1; if (won) c.cameWins += 1; }
         if (executed > 0) { c.execMatches += 1; if (won) c.execWins += 1; }
         g.cards.set(id, c);
@@ -75,17 +76,18 @@ out.push(`# カード別の集計（${by} 別）`, '');
 out.push(`対戦の記録 ${matches} 試合（席ごとに数える）。数えるのは、その席から見えたものだけ（自分の手札・レジストリ・自分の実行）。相手の手札や山札の中身は使っていない。`, '');
 out.push('定義:');
 out.push('- 来た = その席の手札かレジストリに、試合のどこかで一度でもあったカード（初手、ドロー、レジストリへの配置を含む）。枚数で数える。');
-out.push('- 実行 = executeCard・executeSpell・setScript で実行されたこと。他のカードの効果で場に出たものは実行に入れない。');
+out.push('- 実行 = executeCard・executeSpell・setScript・executeLayered・executeRegistry・mountCard で実行されたこと。他のカードの効果で場に出たものは実行に入れない。');
+out.push('- 起動回数 = 場に出たカードの効果・スクリプトを起動した回数（activateCardEffect・activateScript）。実行ではないので、残った率には入らない。');
 out.push('- **使われず残った率 = 手札かレジストリに来たのに、試合が終わるまで一度も実行されなかった枚数 ÷ 来た枚数。**');
 out.push('- 来た試合の勝率 / 実行した試合の勝率 = その席が勝った割合（95% の幅は Wilson、n はその試合数）。カードが勝ちを生んだ印ではなく、「そのカードが出てくる試合での勝率」。');
 out.push(`- 来た試合が ${min} 未満の行には (少) を付けた。幅が広い。`, '');
 for (const [key, g] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ja'))) {
   out.push(`## ${key}（${g.matches} 席の試合、勝率 ${pct(g.wins / g.matches)}）`, '');
-  out.push('| id | 名前 | 来た試合 | 来た枚数 | 実行回数 | 実行した試合 | 実行した試合の勝率 | 来た試合の勝率 | 使われず残った率 |');
-  out.push('|---|---|---|---|---|---|---|---|---|');
+  out.push('| id | 名前 | 来た試合 | 来た枚数 | 実行回数 | 起動回数 | 実行した試合 | 実行した試合の勝率 | 来た試合の勝率 | 使われず残った率 |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|');
   json[key] = { matches: g.matches, wins: g.wins, cards: {} };
   for (const [id, c] of [...g.cards.entries()].sort((a, b) => idOrder(a[0], b[0]))) {
-    out.push(`| ${id} | ${names[id] ?? ''} | ${c.cameMatches}${c.cameMatches < min ? ' (少)' : ''} | ${c.came} | ${c.executed} | ${c.execMatches} | ${rate(c.execWins, c.execMatches)} | ${rate(c.cameWins, c.cameMatches)} | ${c.came ? pct(c.left / c.came) : '-'} |`);
+    out.push(`| ${id} | ${names[id] ?? ''} | ${c.cameMatches}${c.cameMatches < min ? ' (少)' : ''} | ${c.came} | ${c.executed} | ${c.activated} | ${c.execMatches} | ${rate(c.execWins, c.execMatches)} | ${rate(c.cameWins, c.cameMatches)} | ${c.came ? pct(c.left / c.came) : '-'} |`);
     json[key].cards[id] = { name: names[id] ?? null, ...c, leftRate: c.came ? c.left / c.came : null };
   }
   out.push('');
