@@ -4,7 +4,10 @@
 //
 //   --a, --b        CPU specs: a name (cpus/<name>.mjs) or a path, optionally `?key=value&...` (parameters for the CPU). A plays seat-a, B seat-b.
 //   --swap          also play every match with the CPUs on the other seats (needed to compare two different CPUs)
-//   --seeds N|a,b   seeds 1..N, or a list. The same seed list for every pair of decks.
+//   --seed-count N  seeds 1..N.      --seeds a,b,c  exactly those seeds (a single one: --seeds 301,). A bare number in --seeds still means 1..N, with a warning.
+//                   The same seed list for every pair of decks.
+//   --max-matches N a run of more than N matches (default 500) is not started without --yes; the size of the run is printed first. A run with a language model is also told
+//                   its expected cost, and needs --yes when that is more than half of what its set may still spend.
 //   --decks all|ids start deck ids (default: every start deck of the game under test)
 //   --shard i/n     play only the i-th of n shards (1-based) of the table: match k of the full table belongs to shard (k mod n)+1,
 //                   so shards never overlap and together cover the table. The same shard is the same set of matches on every machine,
@@ -43,6 +46,7 @@ import { resolveGameDir } from './game-dir.mjs';
 import { startDeckIds } from './play.mjs';
 import { buildJobs, parseShard, inShard } from './table.mjs';
 import { describeEnv, keyDifferences } from './env.mjs';
+import { estimateLlmRun } from './teachers/estimate.mjs';
 import { cleanRaw } from './raw.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -57,8 +61,18 @@ const shard = args.shard ? parseShard(args.shard) : null;
 const outDir = path.resolve(args.out ?? path.join('cpu-bench-out', `${cpuA.replace(/[^\w.-]+/g, '_')}-${cpuB.replace(/[^\w.-]+/g, '_')}`, ...(shard ? [`shard-${shard.index}-of-${shard.count}`] : [])));
 const workers = Number(args.workers ?? Math.max(1, os.cpus().length - 1));
 const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(typeof args.shadow === 'string' ? { shadow: args.shadow } : {}), ...(typeof args['llm-config'] === 'string' ? { llmConfig: path.resolve(args['llm-config']) } : {}), ...(typeof args['shadow-compare'] === 'string' ? { compare: args['shadow-compare'] } : {}), ...(args['watch-noop'] ? { watchNoop: true } : {}), ...(args.trace ? { trace: true } : {}) };
-const seeds = String(args.seeds ?? '10').includes(',') ? String(args.seeds).split(',').map(Number)
-  : Array.from({ length: Number(args.seeds ?? 10) }, (_, index) => index + 1);
+// Seeds. --seed-count N = seeds 1..N; --seeds a,b,c = exactly those (a single one: --seeds 301,). A bare number in --seeds still means 1..N (as before) but says so:
+// it has been mistaken for "the seed N" three times, each time for a run of hundreds of matches too many.
+const upTo = (n) => Array.from({ length: n }, (_, index) => index + 1);
+let seeds;
+if (args['seed-count'] !== undefined) seeds = upTo(Number(args['seed-count']));
+else if (args.seeds === undefined) seeds = upTo(10);
+else if (String(args.seeds).includes(',')) seeds = String(args.seeds).split(',').map((x) => x.trim()).filter((x) => x !== '').map(Number);
+else {
+  seeds = upTo(Number(args.seeds));
+  console.error(`WARNING: --seeds ${args.seeds} means the ${seeds.length} seeds 1..${args.seeds}. For the single seed ${args.seeds} write --seeds ${args.seeds},   for ${args.seeds} seeds from 1 write --seed-count ${args.seeds}.`);
+}
+if (seeds.length === 0 || seeds.some((x) => !Number.isInteger(x) || x < 0)) { console.error(`seeds? ${JSON.stringify(seeds).slice(0, 80)}`); process.exit(2); }
 
 const gameDir = resolveGameDir(typeof args.commit === 'string' ? args.commit : null, typeof args.variant === 'string' ? args.variant : null);
 const allDecks = await startDeckIds(gameDir);
@@ -114,6 +128,25 @@ if (existsSync(envFile)) {
 const { rows: finishedRows, unreadable } = cleanRaw(rawFile);
 const done = new Set(finishedRows.map((row) => row.job));
 const queue = wanted.filter((job) => !done.has(job.id));
+
+// The size of the run is told before anything starts, and a large one needs --yes (or a higher --max-matches).
+const maxMatches = Number(args['max-matches'] ?? 500);
+console.log(`this run: ${queue.length} matches to play (seeds ${seeds.length > 6 ? `${seeds[0]}..${seeds.at(-1)}, ${seeds.length} of them` : seeds.join(',')}; ${decks.length} decks${swap ? ', both orders' : ''}), limit ${maxMatches} without --yes`);
+if (queue.length > maxMatches && !args.yes) {
+  console.error(`${queue.length} matches is more than --max-matches ${maxMatches}: not started. If that is meant, add --yes (or --max-matches ${queue.length}).`);
+  process.exit(4);
+}
+if (typeof args['llm-config'] === 'string' && args.shadow === 'llm') {
+  const config = JSON.parse(readFileSync(path.resolve(args['llm-config']), 'utf8'));
+  if (config.transport !== 'dry' && config.transport !== 'replay') {
+    const e = estimateLlmRun(config, queue.length);
+    console.log(`LLM: about ${e.calls} calls to each of ${e.models.length} model(s) (${e.models.map((m) => m.model).join(', ')}); expected about $${e.expectedUsd.toFixed(2)}, at most about $${e.maxUsd.toFixed(2)}; the set may spend $${e.limitUsd} (spent $${e.spentUsd.toFixed(2)})`);
+    if (e.expectedUsd > 0.5 * e.remainingUsd && !args.yes) {
+      console.error(`the expected cost is more than half of what the set may still spend ($${e.remainingUsd.toFixed(2)}): not started. If that is meant, add --yes.`);
+      process.exit(4);
+    }
+  }
+}
 
 const previous = existsSync(envFile) ? JSON.parse(readFileSync(path.join(outDir, 'config.json'), 'utf8')) : null;
 writeFileSync(envFile, JSON.stringify(env, null, 2));
