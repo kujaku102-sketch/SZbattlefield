@@ -62,7 +62,7 @@
       ]
     },
     "reference": "lookahead itself wins 68.5% (65.5-71.3, 980 matches) against simple",
-    "repeatability": "played again from this file (seed 1 against simple, both orders, 98 matches): every match identical to the evaluation above (hash of the moves, result, turns, first player): 98/98; 60 won"
+    "repeatability": "played again from this file (seed 1 against simple, both orders, 98 matches): every match identical to the evaluation above (hash of the moves, result, turns, first player): 98/98; 60 won. Played again in a clean clone of the commit that made gen1 self-contained (nothing uncommitted): 98/98 identical again. With cpus/learned/policy.mjs deliberately broken in that clone, gen1 played 8 of those matches identically (it does not read cpus/learned/)."
   },
   "timePerDecision": {
     "note": "choose() of the CPU: the candidates (the game's own planner, about 3.4 ms a call), the features and the scores. Milliseconds.",
