@@ -81,7 +81,7 @@ for (const { label, teacher, settings } of teachers) {
     if (a.error) { s.errors[a.error.kind] = (s.errors[a.error.kind] ?? 0) + 1; continue; }
     s.answered += 1; if (a.n === d.answers.teacher.n) { s.sameAsTeacher += 1; row.same += 1; }
   }
-  if (args.dry) s.estimate = estimateRun(teacher.stats, settings.pricePerMTok ?? { input: 0, output: 0 });
+  if (args.dry) s.estimate = estimateRun(teacher.stats, settings.pricing ?? settings.pricePerMTok ?? { input: 0, output: 0 }, settings.expectedOutputTokens ?? 100);
   report.models[label] = s;
 }
 for (let i = 0; i < teachers.length; i += 1) for (let j = i + 1; j < teachers.length; j += 1) {

@@ -9,6 +9,10 @@
 // An answer asked for once is kept in the responses folder under the hash of (model, parameters, prompt); asking again for the same prompt costs nothing and gives the same answer.
 // The ledger (src/teachers/ledger.mjs) keeps a run under settings.maxUsd / maxCalls: when the next call could pass the limit it is not made (error kind "budget").
 //
+// pricing: { label, rows: [{ from: "2026-11-08", input, output, note }, { from: "2026-12-01", ... }] } dollars per million tokens, the row in force on the day of the call (the output price
+//          counts the model's thinking tokens too); every ledger line says which row it used (priceVersion). `pricePerMTok: { input, output }` is the same for all days.
+// retries: how many times a call that was answered 429 (rate limit) or 5xx is made again, after waiting (the Retry-After of the answer, else 2, 4, 8, 16 s ...); such a call costs nothing and is not in the ledger
+// thinkingBudget (gemini): thinking tokens the model may spend before it answers; they are part of maxTokens
 // provider: "anthropic" (default) or "gemini": the same prompt, the answer read the same; only the request and the reading of the reply differ (below). The key is FORGE_LLM_API_KEY for both.
 // set: the name of one run of a set of questions; the ledger of the set is ledgerDir/<set>.jsonl, and maxUsd / maxCalls count that file only, so every set has its own limit
 // scope: { types: ["install", "executeCard"], noGain: true } which decisions the harness asks about at all (see inScope)
@@ -44,6 +48,15 @@ export function inScope(scope, teacherType, teacherWhy) {
   return Boolean(scope.noGain) && ['no-gain', 'no-supported-move'].includes(String(teacherWhy ?? '').split(':')[0]);
 }
 
+// the row of `pricing` in force on `date` (ISO day)
+export function priceAt(pricing, date = new Date()) {
+  const day = (date instanceof Date ? date : new Date(date)).toISOString().slice(0, 10);
+  const rows = [...pricing.rows].sort((a, b) => String(a.from).localeCompare(String(b.from)));
+  let row = null; for (const r of rows) if (r.from <= day) row = r;
+  if (!row) throw new Error(`no price in force on ${day} (first row from ${rows[0]?.from})`);
+  return { input: row.input, output: row.output, cacheRead: row.cacheRead, cacheWrite: row.cacheWrite, version: `${pricing.label ?? 'pricing'} from ${row.from}` };
+}
+
 const ENDPOINTS = {
   anthropic: () => 'https://api.anthropic.com/v1/messages',
   gemini: (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
@@ -57,18 +70,19 @@ const PROVIDERS = {
   },
   gemini: {
     request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body: { systemInstruction: { parts: [{ text: prompt.system }] }, contents: [{ role: 'user', parts: [{ text: prompt.user }] }], generationConfig: { maxOutputTokens: params.max_tokens, temperature: params.temperature, responseMimeType: 'application/json' } } }),
+      body: { systemInstruction: { parts: [{ text: prompt.system }] }, contents: [{ role: 'user', parts: [{ text: prompt.user }] }], generationConfig: { maxOutputTokens: params.max_tokens, temperature: params.temperature, responseMimeType: 'application/json', ...(s.thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget: s.thinkingBudget } } : {}) } } }),
     read: (data) => ({ text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join(''), stopReason: data.candidates?.[0]?.finishReason ?? null,
       usage: { input_tokens: data.usageMetadata?.promptTokenCount ?? 0, output_tokens: (data.usageMetadata?.candidatesTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0) } })
   }
 };
 
 export function createLlmTeacher(settings, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
-  const s = { transport: 'dry', provider: 'anthropic', model: 'claude-haiku-5-5', maxTokens: 300, temperature: 0, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000,
+  const s = { transport: 'dry', provider: 'anthropic', model: 'claude-haiku-5-5', maxTokens: 300, temperature: 0, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000, retries: 4,
     version: '2023-06-01', ...settings };
   if (!PROVIDERS[s.provider]) throw new Error(`provider ${s.provider}? one of ${Object.keys(PROVIDERS).join(', ')}`);
   s.endpoint ??= ENDPOINTS[s.provider](s.model);
   if (s.set && s.ledgerDir && !s.ledgerFile) s.ledgerFile = path.join(s.ledgerDir, `${s.set}.jsonl`);
+  const priceNow = () => (s.pricing ? priceAt(s.pricing) : { ...s.pricePerMTok, version: 'fixed' });
   let endpointHost = null; try { const u = new URL(s.endpoint); endpointHost = u.protocol === 'https:' ? u.host : null; } catch { /* refused below */ }
   const params = { ...(s.provider === 'anthropic' ? {} : { provider: s.provider }), model: s.model, max_tokens: s.maxTokens, temperature: s.temperature };
   const stats = { decisions: 0, calls: 0, cached: 0, errors: {}, promptChars: 0, estimatedInputTokens: 0, maxUsd: 0, usd: 0, usage: { input_tokens: 0, output_tokens: 0 }, stopped: null };
@@ -79,6 +93,8 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
   const release = () => { inFlight -= 1; waiting.shift()?.(); };
   const cacheFile = (key) => (s.responsesDir ? path.join(s.responsesDir, `${key}.json`) : null);
 
+  const retryAfterOf = (response) => { const v = Number(response.headers?.get?.('retry-after')); return Number.isFinite(v) && v > 0 ? Math.min(v, 120) * 1000 : null; };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   async function callApi(request) {
     if (!endpointHost) return { error: { kind: 'endpoint', message: 'the endpoint of the settings is not an https address' } };
     const apiKey = readApiKey(env);
@@ -88,7 +104,7 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
       const made = PROVIDERS[s.provider].request(s, params, request.prompt, apiKey);
       const response = await fetchImpl(s.endpoint, { method: 'POST', signal: controller.signal, headers: made.headers, body: JSON.stringify(made.body) });
       const body = await response.text();
-      if (!response.ok) return { error: { kind: 'http', message: redact(`HTTP ${response.status}: ${body.slice(0, 300)}`, env) }, latencyMs: Date.now() - started };
+      if (!response.ok) return { error: { kind: response.status === 429 ? 'rate-limit' : 'http', status: response.status, message: redact(`HTTP ${response.status}: ${body.slice(0, 300)}`, env) }, retryAfterMs: retryAfterOf(response), latencyMs: Date.now() - started };
       const data = JSON.parse(body);
       const read = PROVIDERS[s.provider].read(data);
       return { raw: read.text, usage: read.usage, latencyMs: Date.now() - started, stopReason: read.stopReason };
@@ -102,7 +118,8 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     const key = hashOf({ params, system: request.prompt.system, user: request.prompt.user });
     const file = cacheFile(key);
     stats.decisions += 1; stats.promptChars += request.prompt.system.length + request.prompt.user.length;
-    const estimate = maxCostOf(request.prompt.system.length + request.prompt.user.length, s.maxTokens, s.pricePerMTok, 1.5);
+    const price = priceNow();
+    const estimate = maxCostOf(request.prompt.system.length + request.prompt.user.length, s.maxTokens, price, 1.5);
     stats.estimatedInputTokens += Math.ceil((request.prompt.system.length + request.prompt.user.length) / 2); stats.maxUsd += estimate;
     const base = { id: request.id, model: s.model, params, promptHash: key };
     if (file && existsSync(file)) {
@@ -113,16 +130,24 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     if (s.transport === 'dry') { stats.errors['dry-run'] = (stats.errors['dry-run'] ?? 0) + 1; return { ...base, choice: null, error: { kind: 'dry-run', message: 'no call is made' } }; }
     if (ledger) { const ok = ledger.canSpend(estimate); if (!ok.ok) { stats.stopped = 'budget'; stats.errors.budget = (stats.errors.budget ?? 0) + 1; return { ...base, choice: null, error: { kind: 'budget', message: ok.reason } }; } }
     await slot();
-    let result; try { result = await callApi(request); } finally { release(); }
+    let result;
+    for (let attempt = 0; ; attempt += 1) {
+      try { result = await callApi(request); } finally { release(); }
+      const again = result.error && (result.error.kind === 'rate-limit' || (result.error.status >= 500 && result.error.status < 600)) && attempt < s.retries;
+      if (!again) break;
+      stats.retried = (stats.retried ?? 0) + 1;
+      await sleep(result.retryAfterMs ?? 2000 * 2 ** attempt);
+      await slot();
+    }
     stats.calls += 1;
     if (result.error) {
       stats.errors[result.error.kind] = (stats.errors[result.error.kind] ?? 0) + 1;
-      ledger?.record({ id: request.id, usd: 0, model: s.model, provider: s.provider, set: s.set ?? null, endpoint: endpointHost, error: result.error.kind, latencyMs: result.latencyMs });
+      ledger?.record({ id: request.id, usd: 0, model: s.model, provider: s.provider, set: s.set ?? null, endpoint: endpointHost, priceVersion: price.version, ...(result.error.status ? { status: result.error.status } : {}), error: result.error.kind, latencyMs: result.latencyMs });
       return { ...base, choice: null, error: result.error, latencyMs: result.latencyMs };
     }
-    const usd = priceOf(result.usage, s.pricePerMTok);
+    const usd = priceOf(result.usage, price);
     stats.usd += usd; stats.usage.input_tokens += result.usage.input_tokens ?? 0; stats.usage.output_tokens += result.usage.output_tokens ?? 0;
-    ledger?.record({ id: request.id, usd, model: s.model, provider: s.provider, set: s.set ?? null, endpoint: endpointHost, usage: result.usage, latencyMs: result.latencyMs });
+    ledger?.record({ id: request.id, usd, model: s.model, provider: s.provider, set: s.set ?? null, endpoint: endpointHost, priceVersion: price.version, usage: result.usage, latencyMs: result.latencyMs });
     if (file) writeFileSync(file, JSON.stringify({ raw: result.raw, usage: result.usage, latencyMs: result.latencyMs, model: s.model, params, at: new Date().toISOString() }));
     const parsed = parseAnswer(result.raw, request.candidates.length);
     if (parsed.error) stats.errors[parsed.error.kind] = (stats.errors[parsed.error.kind] ?? 0) + 1;
@@ -155,7 +180,10 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
 }
 
 // the price of a run before paying it: from the stats of a dry run (settings.pricePerMTok given)
-export function estimateRun(stats, pricePerMTok, outputTokensPerDecision = 100) {
+// (the most a decision can cost is counted by the ledger from maxTokens, which holds the thinking tokens too: stats.maxUsd is for the price in force today)
+export function estimateRun(stats, price, outputTokensPerDecision = 100) {
   const input = stats.estimatedInputTokens; const output = stats.decisions * outputTokensPerDecision;
-  return { decisions: stats.decisions, inputTokens: input, outputTokens: output, usd: (input * pricePerMTok.input + output * pricePerMTok.output) / 1e6, maxUsd: stats.maxUsd };
+  const rows = price?.rows ? price.rows.map((r) => ({ ...r })) : [{ from: 'fixed', ...price }];
+  const cost = (r) => (input * r.input + output * r.output) / 1e6;
+  return { decisions: stats.decisions, inputTokens: input, outputTokens: output, expectedUsdByPrice: rows.map((r) => ({ from: r.from, usd: cost(r) })), maxUsdToday: stats.maxUsd };
 }
