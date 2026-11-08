@@ -18,16 +18,16 @@ const REPEAT_LIMITED = new Set(['redeploy', 'activateCardEffect']);
 const MOVES_PER_TURN = 40;
 // What the seat sees, without the revision: if it is the same after a move, the move changed nothing.
 const looks = (query) => { const { revision, ...rest } = query.observation ?? {}; return JSON.stringify(rest); };
-const dot = (W, f) => { let z = 0; for (let j = 0; j < f.length; j += 1) z += W[j] * f[j]; return z; };
+const dot = (W, f, n = f.length) => { let z = 0; for (let j = 0; j < n; j += 1) z += W[j] * f[j]; return z; };
 const histKeyOf = (action) => `${action.type}:${action.cardRef ?? action.attackerRef ?? ''}`;
 const CHOICES = new Set(['answerChoice', 'declineChoice', 'keepOpeningHand', 'openingMulligan']);
 
 // crossing (forgehammer src/cross.mjs): the features after the first CAND_NAMES.length are the products candidate[row] * state[col], row a and column b at F + a * C + b
-export function crossOf(cross) {
+export function crossOf(cross, base = CAND_NAMES.length) {
   if (!cross) return null;
   const rows = cross.rows.map((name) => CAND_NAMES.indexOf(name)); const cols = cross.cols.map((name) => STATE_NAMES.indexOf(name));
   if (rows.some((j) => j < 0) || cols.some((j) => j < 0)) throw new Error('the cross of this CPU has a name this build does not');
-  return { rows, cols, base: CAND_NAMES.length };
+  return { rows, cols, base };
 }
 const crossDot = (W, f, state, cross) => {
   let z = 0; const C = cross.cols.length;
@@ -40,18 +40,20 @@ const crossDot = (W, f, state, cross) => {
 };
 
 // flat: scores of a decision
-export function scoreDecision(query, queryAction, W, history, cross = null) {
+export function scoreDecision(query, queryAction, W, history, cross = null, nBase = CAND_NAMES.length) {
   const built = buildCandidates(query, queryAction);
   const features = decisionFeatures(query, built, history, { withEntries: false });
-  return { built, features, scores: features.cands.map((f) => dot(W, f) + (cross ? crossDot(W, f, features.state, cross) : 0)) };
+  return { built, features, scores: features.cands.map((f) => dot(W, f, nBase) + (cross ? crossDot(W, f, features.state, cross) : 0)) };
 }
 
 export function learnedCpu({ id, featureVersion, featureNames, weights, entryWeights = null, optionWeights = null, cross: crossSpec = null, meta = {} }) {
-  if (featureVersion !== FEATURE_VERSION || featureNames.length !== CAND_NAMES.length || featureNames.some((name, i) => name !== CAND_NAMES[i])) {
+  // a CPU made for an older, shorter list of features reads that list (the new features come after it and weigh nothing for it)
+  if (featureVersion > FEATURE_VERSION || featureNames.length > CAND_NAMES.length || featureNames.some((name, i) => name !== CAND_NAMES[i])) {
     throw new Error(`${id}: made for features v${featureVersion} (${featureNames.length}), this build has v${FEATURE_VERSION} (${CAND_NAMES.length}); forge it again`);
   }
+  const nBase = featureNames.length;
   const W = Float64Array.from(weights ?? []);
-  const cross = crossOf(crossSpec);
+  const cross = crossOf(crossSpec, nBase);
   const staged = entryWeights !== null;
   const WE = staged ? Float64Array.from(entryWeights) : null;
   const WO = staged ? Float64Array.from(optionWeights) : null;
@@ -109,7 +111,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             return hand(key, query, { ok: true, value: { commandId: view.commandId, expectedRevision: revision, action } });
           };
           if (!staged) {
-            const { built, scores } = scoreDecision(query, queryAction, W, history, cross);
+            const { built, scores } = scoreDecision(query, queryAction, W, history, cross, nBase);
             counters.planCalls += built.planCalls;
             let best = -1; let bestScore = -Infinity;
             for (let i = 0; i < scores.length; i += 1) {
@@ -132,7 +134,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             const e = entries[i];
             if (tooMany && e.type !== 'endTurn') continue;
             if (blocked(e.type, e.cardRef, `own:${e.type}|${e.cardRef ?? ''}`)) continue;
-            const z = dot(WE, candidateFeatures(ctx, e));
+            const z = dot(WE, candidateFeatures(ctx, e), nBase);
             if (z > bestScore) { bestScore = z; best = i; }
           }
           if (best < 0) return fallback(view, 'no-candidate');
@@ -146,7 +148,7 @@ export function learnedCpu({ id, featureVersion, featureNames, weights, entryWei
             let ob = -Infinity;
             for (const candidate of planned.cands) {
               if (noEffect.has(`own:${candidate.sig}`)) continue;
-              const z = dot(WO, candidateFeatures(octx, candidate));
+              const z = dot(WO, candidateFeatures(octx, candidate), nBase);
               if (z > ob) { ob = z; pick = candidate; }
             }
           }
