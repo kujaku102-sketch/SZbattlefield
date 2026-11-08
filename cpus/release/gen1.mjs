@@ -3,7 +3,7 @@
 // Forged by forgehammer (packages/forge): a one-weight-vector CPU. Do not edit; forge it again.
 // weights 1f4f765db772c312; learned from 24911 decisions of {"a":"lookahead","b":"lookahead"}; softmax, target chosen, why all.
 // validation (whole matches kept apart): top-1 65.4% on 4905 decisions.
-import { learnedCpu } from '../learned/policy.mjs';
+import { learnedCpu } from './gen1/policy.mjs';
 
 export default learnedCpu({
   id: 'gen1',
