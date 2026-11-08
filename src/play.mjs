@@ -268,7 +268,11 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
     const outcome = locked === null ? null : locked === 'draw' ? { kind: 'draw' } : { kind: 'win', winnerSeat: authority.metadata.seatIds[locked === 'player' ? 0 : 1] };
     result.turns = authority.engineState.turnNumber;
     result.outcome = outcome;
-    if (style) result.style = style.summary();
+    if (style) {
+      result.style = style.summary();
+      const st = authority.engineState;      // how the match ended: the STR and the deck of each user, and the last lines of the game's log
+      result.end = { str: [st.players.player.fortressStr, st.players.ai.fortressStr], deck: [st.players.player.deck.length, st.players.ai.deck.length], lastLog: (st.log ?? []).slice(-4).map((entry) => entry.text) };
+    }
     result.hash = createHash('sha256').update(JSON.stringify([record.commands, outcome, result.turns])).digest('hex').slice(0, 16);
     if (finished) result.status = 'finished';
     if (limits.watchNoop) result.noop = noop;

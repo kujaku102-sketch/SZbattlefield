@@ -23,6 +23,14 @@ export function createStyle() {
   let pending = null;
   const seen = [new Map(), new Map()];       // by seat: uid -> { id, name, executed }
   const names = {};
+  // events read from the game's log (the log keeps its newest 120 lines, so it is read after every command): how many times Humanoid's Recovery Boot (STR back to 1) fired
+  const events = { recoveries: 0 }; let lastLog = 0;
+  const readLog = (state) => {
+    for (const entry of state.log ?? []) {
+      const n = Number(/^L(\d+)$/.exec(String(entry.id))?.[1] ?? 0);
+      if (n > lastLog) { lastLog = n; if (/STRを1へ回復/.test(entry.text ?? '')) events.recoveries += 1; }
+    }
+  };
   const observe = (state) => {
     for (const seat of [0, 1]) for (const zone of ['hand', 'registry']) for (const card of state.players[HOLDERS[seat]][zone] ?? []) {
       if (!seen[seat].has(instanceOf(card))) seen[seat].set(instanceOf(card), { id: card.id, executed: 0 });
@@ -52,7 +60,7 @@ export function createStyle() {
       }
       const source = ACTIVATIONS.has(pending.type) && typeof recorded?.cardRef === 'string' && recorded.cardRef.startsWith('card:') ? seen[pending.seat].get(recorded.cardRef.slice(5)) : null;
       if (source) source.activated = (source.activated ?? 0) + 1;      // a card that never came through the hand or the registry (placed by an effect) is not counted here
-      observe(state);
+      observe(state); readLog(state);
       if (pending.type === 'attack') {
         if (pending.target === 'user') s.attacks.user += 1; else s.attacks.card += 1;
         const nowMine = uidsOf(me, ['front', 'back']); const nowTheirs = uidsOf(other, ['front', 'back']);
@@ -70,7 +78,7 @@ export function createStyle() {
         for (const entry of seen[seat].values()) { const c = (out[entry.id] ??= [0, 0, 0, 0]); c[0] += 1; c[1] += entry.executed; if (entry.executed === 0) c[2] += 1; c[3] += entry.activated ?? 0; }
         return out;
       };
-      return { 'seat-a': { ...seats[0], cards: cardsOf(0) }, 'seat-b': { ...seats[1], cards: cardsOf(1) }, names };
+      return { 'seat-a': { ...seats[0], cards: cardsOf(0) }, 'seat-b': { ...seats[1], cards: cardsOf(1) }, names, events };
     }
   };
 }
