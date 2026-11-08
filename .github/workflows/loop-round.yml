@@ -1,0 +1,331 @@
+# One round of the improvement loop in pieces: record (shards) -> join the records -> learn -> evaluate (shards) -> join and report.
+# Runs only when started by hand (workflow_dispatch); there is no schedule and nothing here runs on a push or a pull request.
+#
+# What each stage hands to the next is an artifact (a "bundle": src/ and forgehammer's `forge bundle pack` write a manifest with the hash of every file; the next stage verifies it).
+# The language model (src/teachers) is NOT part of the stages above: its job (`llm-record`) is at the bottom, switched off, and is the only job that is given secrets.
+#
+# Own limits (this is a public repository; the runners are shared): one run of this workflow at a time (concurrency), at most 8 jobs in a matrix, 60 minutes a job, at most
+# 2 runs in 24 hours (checked first, below; a run takes about 4 CPU hours), no cron.
+#
+# The game is cloned at `game_commit` (a commit of Siege_Zeke_openbeta that is on GitHub), forgehammer at `forgehammer_commit` (public: kujaku102-sketch/forgehammer).
+# Every shard must run in the same environment (node, game commit, CPU versions): merge refuses otherwise.
+name: loop-round
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_commit:
+        description: 'Siege_Zeke_openbeta commit to play (full sha)'
+        required: true
+      forgehammer_commit:
+        description: 'forgehammer commit to use (full sha)'
+        required: true
+      round:
+        description: 'round number (only a label in the bundles)'
+        default: '1'
+      record_seeds:
+        description: 'seeds of the records, a comma list (a single one: 101,)'
+        default: '101,102,103,104,105'
+      eval_seeds_simple:
+        description: 'seeds of the evaluation against simple (comma list)'
+        default: '1,2,3,4,5,6,7,8,9,10'
+      eval_seeds_lookahead:
+        description: 'seeds of the evaluation against lookahead (comma list)'
+        default: '1,2,3,4,5'
+      hammer_args:
+        description: 'options of `forge hammer` (letters, digits, - and space only)'
+        default: '--why all --advantage value --epochs 30'
+      base_ore_run:
+        description: 'optional: the run id of an earlier run whose joined records (artifact bundle-ore) are learned from too'
+        default: ''
+      run_llm:
+        description: 'the language model job (needs repository secrets; leave false until they are set)'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: szb-loop-round        # one at a time, for this repository
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.19.0'   # exact: part of the environment key
+  MAX_RUNS_PER_DAY: '2'
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check the inputs and the day's limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GAME_COMMIT: ${{ inputs.game_commit }}
+          FORGEHAMMER_COMMIT: ${{ inputs.forgehammer_commit }}
+          ROUND: ${{ inputs.round }}
+          REC: ${{ inputs.record_seeds }}
+          ES: ${{ inputs.eval_seeds_simple }}
+          EL: ${{ inputs.eval_seeds_lookahead }}
+          HAMMER: ${{ inputs.hammer_args }}
+          BASE: ${{ inputs.base_ore_run }}
+        run: |
+          [[ "$GAME_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "game_commit must be a full sha"; exit 1; }
+          [[ "$FORGEHAMMER_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "forgehammer_commit must be a full sha"; exit 1; }
+          [[ "$ROUND" =~ ^[0-9]+$ ]] || { echo "round: a number"; exit 1; }
+          for s in "$REC" "$ES" "$EL"; do [[ "$s" =~ ^[0-9]+(,[0-9]+)*,?$ ]] || { echo "seeds: a comma list of numbers"; exit 1; }; done
+          [[ "$HAMMER" =~ ^[-A-Za-z0-9\ ._]*$ ]] || { echo "hammer_args: letters, digits, - . _ and space only"; exit 1; }
+          [[ -z "$BASE" || "$BASE" =~ ^[0-9]+$ ]] || { echo "base_ore_run: a run id"; exit 1; }
+          since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          n=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/loop-round.yml/runs?created=%3E%3D${since}&per_page=50" --jq '[.workflow_runs[] | select(.id != '"${GITHUB_RUN_ID}"') | select(.conclusion != "cancelled" and .conclusion != "skipped")] | length')
+          echo "runs of this workflow in the last 24 hours (not counting this one): $n (limit $MAX_RUNS_PER_DAY)"
+          [ "$n" -lt "$MAX_RUNS_PER_DAY" ] || { echo "the day's limit of runs is reached"; exit 1; }
+
+  record:
+    needs: check
+    runs-on: ubuntu-24.04           # 4 vCPU, 16 GB on public repositories. Pinned, not ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:                       # 2 tables x 4 shards = 8 jobs
+        table: [ll, ls]             # ll: lookahead against lookahead;  ls: lookahead against simple (both seat orders)
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/Siege_Zeke_openbeta
+          ref: ${{ inputs.game_commit }}
+          path: game
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Play and record the shard
+        env:
+          GAME_DIR: ${{ github.workspace }}/game
+          GAME_COMMIT: ${{ inputs.game_commit }}
+          SEEDS: ${{ inputs.record_seeds }}
+          TABLE: ${{ matrix.table }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if [ "$TABLE" = "ll" ]; then b=lookahead; swap=(); else b=simple; swap=(--swap); fi
+          node src/run.mjs --a lookahead --b "$b" --seeds "$SEEDS" "${swap[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 \
+            --record "out/ore-$TABLE" --out "out/run-$TABLE-$SHARD"
+      - uses: actions/upload-artifact@v7
+        if: always()                # a stopped shard keeps what it finished; run it again to continue
+        with:
+          name: record-${{ matrix.table }}-${{ matrix.shard }}
+          path: out/
+          retention-days: 14
+
+  join-record:
+    needs: record
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/forgehammer
+          ref: ${{ inputs.forgehammer_commit }}
+          path: forgehammer
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: record-*
+          path: parts/
+      - name: Join the records and make the bundle
+        env:
+          ROUND: ${{ inputs.round }}
+        run: |
+          forge="node forgehammer/packages/forge/bin/forge.mjs"
+          $forge ore merge parts/record-ll-*/ore-ll parts/record-ls-*/ore-ls --out bundle-ore
+          $forge info bundle-ore
+          $forge bundle pack bundle-ore --kind ore --round "$ROUND"
+          $forge bundle verify bundle-ore
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundle-ore
+          path: bundle-ore/
+          retention-days: 30
+
+  train:
+    needs: join-record
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read             # to take the records of an earlier run (base_ore_run)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/forgehammer
+          ref: ${{ inputs.forgehammer_commit }}
+          path: forgehammer
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: bundle-ore
+          path: in/ore
+      - name: Records of an earlier run (optional)
+        if: ${{ inputs.base_ore_run != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: bundle-ore
+          run-id: ${{ inputs.base_ore_run }}
+          github-token: ${{ github.token }}
+          path: in/base-ore
+      - name: Learn and make the CPU
+        env:
+          HAMMER: ${{ inputs.hammer_args }}
+          ROUND: ${{ inputs.round }}
+        run: |
+          forge="node forgehammer/packages/forge/bin/forge.mjs"
+          $forge bundle verify in/ore
+          inputs=(in/ore)
+          if [ -d in/base-ore ]; then $forge bundle verify in/base-ore; inputs+=(in/base-ore); fi
+          mkdir -p bundle-weights
+          # $HAMMER is split on spaces on purpose: it was checked to hold only letters, digits and - . _
+          $forge hammer "${inputs[@]}" --out bundle-weights/w.json --quiet $HAMMER
+          $forge smith bundle-weights/w.json --out "bundle-weights/forged-loop${ROUND}.mjs" --name "loop${ROUND}"
+          $forge bundle pack bundle-weights --kind weights --round "$ROUND"
+          $forge bundle verify bundle-weights
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundle-weights
+          path: bundle-weights/
+          retention-days: 30
+
+  eval:
+    needs: train
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:                       # 2 tables x 4 shards = 8 jobs
+        table: [vs-simple, vs-lookahead]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/Siege_Zeke_openbeta
+          ref: ${{ inputs.game_commit }}
+          path: game
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/forgehammer
+          ref: ${{ inputs.forgehammer_commit }}
+          path: forgehammer
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: bundle-weights
+          path: in/weights
+      - name: Play the shard with the new CPU
+        env:
+          GAME_DIR: ${{ github.workspace }}/game
+          GAME_COMMIT: ${{ inputs.game_commit }}
+          ROUND: ${{ inputs.round }}
+          TABLE: ${{ matrix.table }}
+          SHARD: ${{ matrix.shard }}
+          SEEDS_SIMPLE: ${{ inputs.eval_seeds_simple }}
+          SEEDS_LOOKAHEAD: ${{ inputs.eval_seeds_lookahead }}
+        run: |
+          node forgehammer/packages/forge/bin/forge.mjs bundle verify in/weights
+          cp "in/weights/forged-loop${ROUND}.mjs" "cpus/forged-loop${ROUND}.mjs"
+          if [ "$TABLE" = "vs-simple" ]; then b=simple; seeds="$SEEDS_SIMPLE"; else b=lookahead; seeds="$SEEDS_LOOKAHEAD"; fi
+          node src/run.mjs --a "cpus/forged-loop${ROUND}.mjs" --b "$b" --seeds "$seeds" --swap --shard "$SHARD/4" --workers 3 --max-matches 1500 \
+            --out "out/$TABLE/shard-$SHARD-of-4"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: eval-${{ matrix.table }}-${{ matrix.shard }}
+          path: out/
+          retention-days: 14
+
+  join-eval:
+    needs: eval
+    if: always() && needs.eval.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/forgehammer
+          ref: ${{ inputs.forgehammer_commit }}
+          path: forgehammer
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: eval-*
+          path: parts/
+      - name: Join, count and report
+        env:
+          ROUND: ${{ inputs.round }}
+        run: |
+          mkdir -p bundle-eval
+          for table in vs-simple vs-lookahead; do
+            node src/merge.mjs --out "bundle-eval/$table" parts/eval-$table-*/$table/shard-*
+            node src/arena.mjs "bundle-eval/$table"
+          done
+          node forgehammer/packages/forge/bin/forge.mjs bundle pack bundle-eval --kind eval --round "$ROUND"
+          node forgehammer/packages/forge/bin/forge.mjs bundle verify bundle-eval
+          cat bundle-eval/vs-simple/arena.md bundle-eval/vs-lookahead/arena.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bundle-eval
+          path: bundle-eval/
+          retention-days: 30
+
+  # The language model as a teacher: switched off. Needs repository secrets FORGE_ANTHROPIC_API_KEY and/or GEMINI_API_KEY, put in by the owner (settings > secrets and variables > actions);
+  # nobody else gives them, and they are given to THIS job only (the other jobs have no `secrets` in them). The settings of the models (a panel file with a spending limit for its set)
+  # are in the repository; the job refuses a run above the limit as run.mjs does everywhere. Do not turn it on before the secrets are set and the limit is read.
+  llm-record:
+    needs: check
+    if: ${{ inputs.run_llm == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: llm              # an environment can ask its owner to approve each run (settings > environments > llm > required reviewers)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: kujaku102-sketch/Siege_Zeke_openbeta
+          ref: ${{ inputs.game_commit }}
+          path: game
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Record with a language model looking at the decisions
+        env:
+          GAME_DIR: ${{ github.workspace }}/game
+          GAME_COMMIT: ${{ inputs.game_commit }}
+          SEEDS: ${{ inputs.record_seeds }}
+          FORGE_ANTHROPIC_API_KEY: ${{ secrets.FORGE_ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          test -f llm/panel.json || { echo "llm/panel.json (the settings of the models) is not in the repository"; exit 1; }
+          node src/run.mjs --a lookahead --b simple --seeds "$SEEDS" --swap --shard 1/4 --workers 3 --max-matches 300 \
+            --shadow llm --shadow-compare lookahead --llm-config llm/panel.json --record out/ore-llm --record-text --out out/run-llm
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: record-llm
+          path: out/
+          retention-days: 14

@@ -1,0 +1,12 @@
+{ "kind": "llm-panel", "set": "haiku-hard-1", "transport": "direct",
+  "ledgerDir": "llm-ledgers", "responsesDir": "llm-responses",
+  "budget": { "maxUsd": 5 },
+  "primary": "haiku",
+  "scope": { "types": ["install", "executeCard"], "noGain": true },
+  "judge": { "samples": 6, "own": 4, "opp": 4, "margin": 0.5 },
+  "retries": 4,
+  "models": {
+    "haiku": { "provider": "anthropic", "model": "claude-haiku-5-5", "maxTokens": 1500, "effort": "low", "expectedOutputTokens": 300,
+      "pricing": { "label": "Anthropic primary prices (checked 2026-11-08)", "rows": [ { "from": "2026-11-08", "input": 0.10, "output": 0.50 } ] } }
+  },
+  "stages": [ { "ask": ["haiku"] } ] }
