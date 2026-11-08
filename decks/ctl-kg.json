@@ -1,0 +1,87 @@
+{
+  "id": "ctl-kg",
+  "name": "黒緑コントロール",
+  "userId": "bigboss",
+  "cards": [
+    [
+      "STD-048",
+      3
+    ],
+    [
+      "STD-168",
+      3
+    ],
+    [
+      "STD-154",
+      3
+    ],
+    [
+      "STD-153",
+      3
+    ],
+    [
+      "STD-158",
+      3
+    ],
+    [
+      "STD-157",
+      3
+    ],
+    [
+      "STD-239",
+      3
+    ],
+    [
+      "STD-183",
+      2
+    ],
+    [
+      "STD-186",
+      3
+    ],
+    [
+      "STD-180",
+      3
+    ],
+    [
+      "STD-179",
+      3
+    ],
+    [
+      "STD-184",
+      3
+    ],
+    [
+      "STD-167",
+      3
+    ],
+    [
+      "STD-036",
+      3
+    ],
+    [
+      "STD-176",
+      3
+    ],
+    [
+      "STD-182",
+      3
+    ],
+    [
+      "STD-043",
+      3
+    ]
+  ],
+  "notes": {
+    "persona": null,
+    "usage": "",
+    "finish": "",
+    "protect": "",
+    "protectCards": []
+  },
+  "source": {
+    "file": "黒緑コントロール.json",
+    "sha256": "6873d5ab0455d5d6dba1dfea07d808fb2bcf4373bad7007da5fbbbee3b61bd2b",
+    "notesFile": null
+  }
+}

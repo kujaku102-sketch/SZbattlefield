@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cpuVersion, fileHash } from '../cpus/index.mjs';
 import { describeGame } from './game-dir.mjs';
+import { deckHashes } from './decks.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BENCH_FILES = ['play.mjs', 'worker.mjs', 'sim.mjs', 'sim-host.mjs', 'candidates.mjs', 'moves.mjs', '../cpus/index.mjs'];
@@ -19,7 +20,8 @@ export const benchHash = () => {
   return hash.digest('hex').slice(0, 16);
 };
 
-export async function describeEnv({ gameDir, cpuSpecs, limits }) {
+// deckNames: the decks of the table that are not start decks (decks/<name>.json): the hash of each file is part of the key, so a table made with another list is another table
+export async function describeEnv({ gameDir, cpuSpecs, limits, deckNames = [], startIds = [] }) {
   const game = describeGame(gameDir);
   const cpus = {};
   for (const spec of [...new Set(cpuSpecs)]) cpus[spec] = await cpuVersion(spec, gameDir);
@@ -28,6 +30,7 @@ export async function describeEnv({ gameDir, cpuSpecs, limits }) {
     game: { commit: game.commit, dirty: game.dirty, ...(game.variant ? { variant: game.variant } : {}) },
     cpus: Object.fromEntries(Object.entries(cpus).map(([spec, version]) => [spec, version.hash])),
     bench: benchHash(),
+    ...(deckNames.some((name) => !startIds.includes(name)) ? { decks: deckHashes(deckNames, startIds) } : {}),
     limits: { maxCommands: limits.maxCommands, maxWallMs: limits.maxWallMs, idle: limits.idle, maxRepeat: limits.maxRepeat }
   };
   return {

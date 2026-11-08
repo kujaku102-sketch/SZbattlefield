@@ -73,6 +73,17 @@ CPU には「<系統>ZIG gen<世代>」の名前を付ける。置き場所は�
 - 昔の名前: gen1 は `cpus/release/gen1.mjs`、gen2 は `cpus/release/gen2.mjs`、lightZIG gen2 は gen2-light だった。中身（重み・特徴・手の選び方）は変えていない。読み手の再抽選は試合の名前（CPU のファイル名を含む）から決まるので、ファイル名が変わると一部の試合の展開が変わる（強さは同じ）。
 - 世代を上げる決め方: 新しい CPU を前の世代と直接戦わせ（両席、評価の seed）、勝率の 95% の幅の下の端が 50% を超えたら昇格の候補。最後に決めるのは人。
 
+## 自分で組んだデッキ（decks/）
+スタートデッキ以外のデッキは、ゲームのデッキ構築画面で組んで「書き出し」した JSON（`{ id, name, userId, cards: { カードID: 枚数 } }`）を、`decks/<名前>.json` にして使う。デッキ名で指定する（`--decks start-red,ctl-1`）。
+- 取り込み: `node src/deck-import.mjs <書き出した.json>... --id ctl-1[,ctl-2] [--commit <ゲームの sha>] [--check]`。`--id` は対戦台での名前（英数字と - _。`start-` で始められない）。
+  構築の確かめは**ゲーム自身の** `normalizeSavedDeck` と `validateDeck`（deck-builder.js）を使う（ユーザーカードが指定する枚数、同名の上限）。ここに決まりを二重に書かない。`run.mjs` も始める前に同じ確かめをする。
+  ゲームの checker が見ていないもの（DANGER! の 1 種類 1 枚、カード自身の投入制限）は、ここでも見ない（ゲーム側の穴として報告済み）。
+- 席ごとのユーザー: デッキの `userId` のユーザーで始まる（初期手札・前後の上限・STR・メモリ・インシデント・能力）。ゲームの CPU 戦と同じ渡し方（デッキ id は席の `red` / `yellow`、一覧は recipe、ユーザーは `playerUserId` / `aiUserId`）。
+- 使い方メモ（なくてよい）: デッキと同じ名前のマークダウンを横に置くと読む（`黒緑コントロール.json` の横に `黒緑コントロール.md`）。`- 狙いの性格:` の行と、`## 使い方`（序盤・中盤）、`## フィニッシュプラン`（勝ち筋）、`## 守るべきカード`（カード名か ID から書く）の節。
+  CPU には渡さない。人と LLM の先生の文脈、性格の重みと特定戦術の補正を決める材料、勝ち筋のカードが実行されたかを数える材料に使う。見本は `decks/template-red.json`（スタートデッキ 赤を書き出しの形にしたもの）。
+- 先を読む CPU（lookahead など）は、見えない札をそのデッキの一覧から補う。デッキファイルの hash は環境の鍵に入る（別の一覧で回した結果は混ざらない）。
+- 確かめ済み: スタートデッキを書き出しの形にして回すと、元のスタートデッキと同じ試合になる（勝敗・ターン数・コマンド数・先攻が一致。simple と lookahead）。
+
 ## 置いてあるもの
 ```
 src/      arena（CPU A 対 B の勝敗の集計）、variants（ルールを変えたゲームのコピー）、run（対戦表を回す）、play（1 試合）、worker、table（表と shard の分け方）、env（環境の記録）、
@@ -81,5 +92,6 @@ src/      arena（CPU A 対 B の勝敗の集計）、variants（ルールを変
 cpus/     CPU の差し替え口（index.mjs）、今の CPU の見本（simple.mjs）、1 手先を読む CPU（lookahead.mjs と lookahead/eval.mjs）
 probe/    1 手を試す時間の計測、山の食い違いの原因（diagnose-pool）、手の一致（candidates）、局面の拾い方（positions）
 docs/     sharding.md
+decks/    自分で組んだデッキ（書き出した json を取り込んだもの。上の節）
 .github/workflows/bench.yml   GitHub Actions の下書き（手動実行のみ。まだ使っていない）
 ```

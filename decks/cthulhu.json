@@ -1,0 +1,79 @@
+{
+  "id": "cthulhu",
+  "name": "クトゥルフ軸",
+  "userId": "savage_salvage",
+  "cards": [
+    [
+      "STD-160",
+      3
+    ],
+    [
+      "STD-165",
+      1
+    ],
+    [
+      "STD-154",
+      3
+    ],
+    [
+      "STD-155",
+      3
+    ],
+    [
+      "STD-157",
+      3
+    ],
+    [
+      "STD-158",
+      3
+    ],
+    [
+      "STD-150",
+      3
+    ],
+    [
+      "STD-151",
+      3
+    ],
+    [
+      "STD-168",
+      3
+    ],
+    [
+      "STD-152",
+      3
+    ],
+    [
+      "STD-156",
+      3
+    ],
+    [
+      "STD-036",
+      3
+    ],
+    [
+      "STD-013",
+      2
+    ],
+    [
+      "STD-007",
+      3
+    ],
+    [
+      "STD-163",
+      1
+    ]
+  ],
+  "notes": {
+    "persona": null,
+    "usage": "",
+    "finish": "",
+    "protect": "",
+    "protectCards": []
+  },
+  "source": {
+    "file": "クトゥルフ軸.json",
+    "sha256": "2a7a9bbf58b7cae6b7d32f8ad9507fcb32c6bb314273d67babbcdbb318fc904e",
+    "notesFile": null
+  }
+}

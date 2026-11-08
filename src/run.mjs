@@ -8,7 +8,7 @@
 //                   The same seed list for every pair of decks.
 //   --max-matches N a run of more than N matches (default 500) is not started without --yes; the size of the run is printed first. A run with a language model is also told
 //                   its expected cost, and needs --yes when that is more than half of what its set may still spend.
-//   --decks all|ids start deck ids (default: every start deck of the game under test)
+//   --decks all|ids start deck ids, or the names of decks/<name>.json (src/deck-import.mjs); default: every start deck of the game under test
 //   --shard i/n     play only the i-th of n shards (1-based) of the table: match k of the full table belongs to shard (k mod n)+1,
 //                   so shards never overlap and together cover the table. The same shard is the same set of matches on every machine,
 //                   and a match gives the same result wherever and whenever it is played (checked: determinism.mjs, compare.mjs).
@@ -80,7 +80,21 @@ const gameDir = resolveGameDir(typeof args.commit === 'string' ? args.commit : n
 const allDecks = await startDeckIds(gameDir);
 const decks = args.decks && args.decks !== 'all' ? String(args.decks).split(',') : allDecks;
 const swap = Boolean(args.swap);
-const env = await describeEnv({ gameDir, cpuSpecs: [cpuA, cpuB], limits });
+// Decks that are not the game's start decks come from decks/<name>.json (src/decks.mjs, made by src/deck-import.mjs from a deck the game's deck builder saved). They are checked with the game's
+// own checker (deck-builder.js validateDeck) before anything is played: a deck that breaks its rule stops the run.
+const customDecks = decks.filter((name) => !allDecks.includes(name));
+if (customDecks.length > 0) {
+  const { readDeck, gameDeckBuilder, gameCheck } = await import('./decks.mjs');
+  const builder = await gameDeckBuilder(gameDir);
+  const bad = [];
+  for (const name of customDecks) {
+    let deck;
+    try { deck = readDeck(name).deck; } catch (error) { bad.push(`${name}: ${error.message} (the start decks: ${allDecks.join(', ')})`); continue; }
+    for (const error of gameCheck(builder, deck).errors) bad.push(`${name}: ${error}`);
+  }
+  if (bad.length > 0) { console.error(['decks that cannot be played:', ...bad.map((line) => `  ${line}`)].join('\n')); process.exit(2); }
+}
+const env = await describeEnv({ gameDir, cpuSpecs: [cpuA, cpuB], limits, deckNames: decks, startIds: allDecks });
 
 // --record <dir>: the decisions of the CPUs that look ahead are written down (src/ore.mjs)
 // The rules the records were made under go into the header: the game's rule and card versions, its commit and variant, and the first-turn draw read from its source

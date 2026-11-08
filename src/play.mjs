@@ -1,6 +1,7 @@
 // Plays one match between two CPUs through the same local runtime port the game's own AI match uses, and measures it.
 import { createTrace } from './trace.mjs';
 import { createStyle } from './style.mjs';
+import { deckOptions } from './decks.mjs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -58,6 +59,7 @@ export async function startDeckIds(gameDir) { return (await loadGame(gameDir)).d
 // shadow: { create() -> a CPU that looks ahead } to have a teacher look at the decisions of the other CPUs and write what it would have done (DAgger); needs record
 export async function playGame({ gameDir, job, cpus, limits, record: oreOut = null, shadow = null }) {
   const g = await loadGame(gameDir);
+  const startIds = g.decks.START_DECKS.map((deck) => deck.id);
   const matchId = `bench:${job.id}`;
   const anomalies = [];
   const oreLines = oreOut ? [] : null;
@@ -72,7 +74,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
   try {
     const created = g.authority.createMatchAuthority({
       matchId, seatIds: SEATS, seed: job.seed, ruleVersion: g.versions.RULE_VERSION, cardVersion: g.versions.CARD_VERSION,
-      gameOptions: { mode: 'ai', playerDeckId: job.deckA, aiDeckId: job.deckB, openingProtocol: 'v2.4' }
+      gameOptions: { mode: 'ai', ...deckOptions(job.deckA, 'player', startIds), ...deckOptions(job.deckB, 'ai', startIds), openingProtocol: 'v2.4' }
     });
     if (!created.ok) { note('create_failed', { error: created.error }); return result; }
     // The match is held here, as an authority, and advanced with every accepted command; it is never handed to a CPU. Each step makes a port

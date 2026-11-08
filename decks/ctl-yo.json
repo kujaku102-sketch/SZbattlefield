@@ -1,0 +1,75 @@
+{
+  "id": "ctl-yo",
+  "name": "黄橙コントロール",
+  "userId": "doors_zx",
+  "cards": [
+    [
+      "STD-148",
+      3
+    ],
+    [
+      "STD-145",
+      3
+    ],
+    [
+      "STD-134",
+      3
+    ],
+    [
+      "STD-125",
+      3
+    ],
+    [
+      "STD-133",
+      3
+    ],
+    [
+      "STD-129",
+      3
+    ],
+    [
+      "STD-048",
+      3
+    ],
+    [
+      "STD-036",
+      2
+    ],
+    [
+      "STD-033",
+      3
+    ],
+    [
+      "STD-219",
+      3
+    ],
+    [
+      "STD-226",
+      3
+    ],
+    [
+      "STD-238",
+      3
+    ],
+    [
+      "STD-215",
+      3
+    ],
+    [
+      "STD-228",
+      2
+    ]
+  ],
+  "notes": {
+    "persona": null,
+    "usage": "",
+    "finish": "",
+    "protect": "",
+    "protectCards": []
+  },
+  "source": {
+    "file": "黄橙コントロール.json",
+    "sha256": "7d874b8d806fc199d8cbe337961d2607766c72fac37b616e4b99e454cc134e46",
+    "notesFile": null
+  }
+}

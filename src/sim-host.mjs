@@ -38,7 +38,8 @@ export async function loadSimHost(gameDir) {
     const metadata = authority.metadata;
     const seatIds = metadata.seatIds;
     const me = seat === seatIds[0] ? 'player' : 'ai';
-    const deckIds = { player: metadata.startOptions.playerDeckId, ai: metadata.startOptions.aiDeckId };
+    const options = metadata.startOptions;
+    const deckIds = { player: options.playerDeckRecipe ? Object.fromEntries(options.playerDeckRecipe) : options.playerDeckId, ai: options.aiDeckRecipe ? Object.fromEntries(options.aiDeckRecipe) : options.aiDeckId };
     const rand = mulberry32(hashOf(`${metadata.matchId}|${authority.revision}|${seat}`));
     const states = [];
     const sample = (k) => states[k] ??= sim.determinize(engine, me, seatIds, deckIds, rand).state;

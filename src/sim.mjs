@@ -31,6 +31,8 @@ export async function loadSim(gameDir) {
     decks: await imp('src/data/start-decks.js')
   };
   const DECKLISTS = Object.fromEntries(G.decks.START_DECKS.map((deck) => [deck.id, deck.cards]));
+  // a deck is named by a start deck id, or given as its list { card id: copies } (a custom deck: src/decks.mjs)
+  const listOf = (deck) => (typeof deck === 'string' ? DECKLISTS[deck] : deck) ?? {};
 
   // The copy of the engine state used for trying moves: the engine's own copy for history, without the log, the event list and the
   // history (checked by probe/probe.mjs: the same move gives the same state, up to the clock-made choice request ids).
@@ -97,7 +99,7 @@ export async function loadSim(gameDir) {
     return slots;
   }
 
-  // engine: the real state (read to copy it and to count what the seat sees); deckIds: { player, ai } start deck ids.
+  // engine: the real state (read to copy it and to count what the seat sees); deckIds: { player, ai } start deck ids, or the lists of custom decks.
   // Returns { state, ms: { clone, derive, fill, total }, plan } (plan: per owner, the pool and the slots; used by the checks).
   function determinize(engine, viewerPlayer, seatIds, deckIds, rand) {
     const t0 = now();
@@ -105,12 +107,12 @@ export async function loadSim(gameDir) {
     const tClone = msSince(t0);
 
     const t1 = now();
-    const deckLimit = Object.values(DECKLISTS[deckIds.player] ?? {}).reduce((n, c) => n + c, 0) + Object.values(DECKLISTS[deckIds.ai] ?? {}).reduce((n, c) => n + c, 0);
+    const deckLimit = Object.values(listOf(deckIds.player)).reduce((n, c) => n + c, 0) + Object.values(listOf(deckIds.ai)).reduce((n, c) => n + c, 0);
     const visible = visibleCounts(engine, viewerPlayer, seatIds, deckLimit);
     const owners = [['player', seatIds[0], deckIds.player], ['ai', seatIds[1], deckIds.ai]];
     const plan = owners.map(([player, seat, deckId]) => {
       const pool = [];
-      for (const [id, copies] of Object.entries(DECKLISTS[deckId] ?? {})) {
+      for (const [id, copies] of Object.entries(listOf(deckId))) {
         const left = copies - (visible[seat][id] ?? 0);
         for (let i = 0; i < left; i += 1) pool.push(id);
       }
@@ -124,7 +126,7 @@ export async function loadSim(gameDir) {
       const holder = copy.players[player];
       // The decklist minus the seen cards does not always explain every hidden slot (see probe/diagnose-pool.mjs). A slot the pool cannot
       // fill gets a card drawn from the decklist: a real hidden card is never left in place.
-      const list = Object.entries(DECKLISTS[deckIds[player]] ?? {});
+      const list = Object.entries(listOf(deckIds[player]));
       const listTotal = list.reduce((n, [, copies]) => n + copies, 0);
       const drawFromList = () => { let at = Math.floor(rand() * listTotal); for (const [id, copies] of list) { if (at < copies) return id; at -= copies; } return list[0][0]; };
       slots.forEach((slot, n) => {
