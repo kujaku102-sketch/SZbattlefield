@@ -1,0 +1,35 @@
+{
+  "name": "gen1",
+  "file": "cpus/release/gen1.mjs",
+  "what": "Generation 1 of the learned CPU: one linear scorer over the candidates of a decision (flat), learned from a looking-ahead CPU's decisions, including the moves it left to the game's own CPU, with each decision weighted by how the match went (flat-all-value).",
+  "weights": { "digest": "1f4f765db772c312", "featureVersion": 3, "candidateFeatures": 75, "stateFeatures": 30 },
+  "learnedFor": {
+    "note": "The rules the data was played under. When the game's rules change (the first-turn draw, a card, a rule version), the data and this CPU are of the old rules: learn it again.",
+    "game": "b8214a6dd3dd5b9379138e64ba1d3814209a5455",
+    "ruleVersion": "2.0-public-staging.19",
+    "cardVersion": "beta0.9.2-cards.11",
+    "firstTurnDraw": { "first": 0, "second": 2 }
+  },
+  "learnedFrom": {
+    "teacher": "lookahead (k=2 determinized states, one move ahead)",
+    "records": "lookahead against lookahead (245 matches) and lookahead against simple in both seat orders (490 matches), every pair of the 7 start decks, seeds 101-105",
+    "matches": 735,
+    "decisionsRecorded": 28617,
+    "decisionsLearnedFrom": 24911,
+    "validation": { "top1": 0.654, "decisions": 4905, "note": "whole matches kept apart (20%); the share of decisions where the CPU's best move is the teacher's" },
+    "method": { "loss": "softmax over the candidates of a decision", "target": "chosen", "why": "all", "advantage": "value", "beta": 1, "epochs": 30, "lr": 0.05, "l2": 0.0001, "seed": 1 }
+  },
+  "evaluation": {
+    "note": "Strength = the share of matches won (a draw counts a half), both seat orders, every pair of start decks, game b8214a6; 95% range: Wilson.",
+    "vsSimple": { "seeds": "1-10", "matches": 980, "win": 0.654, "range95": [0.624, 0.683] },
+    "vsLookahead": { "seeds": "1-5", "matches": 490, "win": 0.437, "range95": [0.393, 0.481] },
+    "reference": "lookahead itself wins 68.5% (65.5-71.3, 980 matches) against simple",
+    "repeatability": "played again from this file (seed 1 against simple, both orders, 98 matches): every match identical to the evaluation above (hash of the moves, result, turns, first player): 98/98; 60 won"
+  },
+  "timePerDecision": {
+    "note": "choose() of the CPU: the candidates (the game's own planner, about 3.4 ms a call), the features and the scores. Milliseconds.",
+    "alone": { "median": 11.7, "p95": 53, "source": "measured on an idle machine (v3 report)" },
+    "machineBusy": { "median": 9.7, "p95": 91.9, "p99": 134.8, "max": 367.1, "decisions": 3926, "source": "gen1 against itself, seed 1, 49 matches, while other runs were using the machine" }
+  },
+  "playsOnly": "what the seat can see: its own query (the observation and its legal actions). No look-ahead, no sim, no hidden information."
+}
