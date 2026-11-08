@@ -9,6 +9,10 @@
 // An answer asked for once is kept in the responses folder under the hash of (model, parameters, prompt); asking again for the same prompt costs nothing and gives the same answer.
 // The ledger (src/teachers/ledger.mjs) keeps a run under settings.maxUsd / maxCalls: when the next call could pass the limit it is not made (error kind "budget").
 //
+// provider: "anthropic" (default) or "gemini": the same prompt, the answer read the same; only the request and the reading of the reply differ (below). The key is FORGE_LLM_API_KEY for both.
+// set: the name of one run of a set of questions; the ledger of the set is ledgerDir/<set>.jsonl, and maxUsd / maxCalls count that file only, so every set has its own limit
+// scope: { types: ["install", "executeCard"], noGain: true } which decisions the harness asks about at all (see inScope)
+//
 // settings: { transport: "direct"|"replay"|"dry", model, maxTokens, temperature, concurrency, maxUsd, maxCalls, pricePerMTok: { input, output, cacheRead?, cacheWrite? },
 //             responsesDir, ledgerFile, timeoutMs, endpoint, version }      (the API key is not a setting: src/teachers/secrets.mjs, FORGE_LLM_API_KEY only)
 // The address to send to is `endpoint` of the settings (the official API by default) and nothing else: no SDK, no environment variable or profile is looked at for it, and
@@ -33,11 +37,40 @@ export function parseAnswer(text, nCandidates) {
   return { choice, reason: String(data.reason ?? '') };
 }
 
+// the decisions worth a question: those where the looking-ahead teacher chose one of `types`, or left the move to the game's own CPU (no gain found, no move it supports)
+export function inScope(scope, teacherType, teacherWhy) {
+  if (!scope) return true;
+  if ((scope.types ?? []).includes(teacherType)) return true;
+  return Boolean(scope.noGain) && ['no-gain', 'no-supported-move'].includes(String(teacherWhy ?? '').split(':')[0]);
+}
+
+const ENDPOINTS = {
+  anthropic: () => 'https://api.anthropic.com/v1/messages',
+  gemini: (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+};
+
+// each provider: how the request is made, how the reply is read -> { text, usage: { input_tokens, output_tokens }, stopReason }
+const PROVIDERS = {
+  anthropic: {
+    request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': s.version }, body: { ...params, system: prompt.system, messages: [{ role: 'user', content: prompt.user }] } }),
+    read: (data) => ({ text: (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''), usage: data.usage ?? {}, stopReason: data.stop_reason ?? null })
+  },
+  gemini: {
+    request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: { systemInstruction: { parts: [{ text: prompt.system }] }, contents: [{ role: 'user', parts: [{ text: prompt.user }] }], generationConfig: { maxOutputTokens: params.max_tokens, temperature: params.temperature, responseMimeType: 'application/json' } } }),
+    read: (data) => ({ text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join(''), stopReason: data.candidates?.[0]?.finishReason ?? null,
+      usage: { input_tokens: data.usageMetadata?.promptTokenCount ?? 0, output_tokens: (data.usageMetadata?.candidatesTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0) } })
+  }
+};
+
 export function createLlmTeacher(settings, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
-  const s = { transport: 'dry', model: 'claude-haiku-5-5', maxTokens: 300, temperature: 0, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000,
-    endpoint: 'https://api.anthropic.com/v1/messages', version: '2023-06-01', ...settings };
+  const s = { transport: 'dry', provider: 'anthropic', model: 'claude-haiku-5-5', maxTokens: 300, temperature: 0, concurrency: 4, maxUsd: Infinity, maxCalls: Infinity, pricePerMTok: { input: 0, output: 0 }, timeoutMs: 60000,
+    version: '2023-06-01', ...settings };
+  if (!PROVIDERS[s.provider]) throw new Error(`provider ${s.provider}? one of ${Object.keys(PROVIDERS).join(', ')}`);
+  s.endpoint ??= ENDPOINTS[s.provider](s.model);
+  if (s.set && s.ledgerDir && !s.ledgerFile) s.ledgerFile = path.join(s.ledgerDir, `${s.set}.jsonl`);
   let endpointHost = null; try { const u = new URL(s.endpoint); endpointHost = u.protocol === 'https:' ? u.host : null; } catch { /* refused below */ }
-  const params = { model: s.model, max_tokens: s.maxTokens, temperature: s.temperature };
+  const params = { ...(s.provider === 'anthropic' ? {} : { provider: s.provider }), model: s.model, max_tokens: s.maxTokens, temperature: s.temperature };
   const stats = { decisions: 0, calls: 0, cached: 0, errors: {}, promptChars: 0, estimatedInputTokens: 0, maxUsd: 0, usd: 0, usage: { input_tokens: 0, output_tokens: 0 }, stopped: null };
   const ledger = s.ledgerFile ? openLedger(s.ledgerFile, { maxUsd: s.maxUsd, maxCalls: s.maxCalls }) : null;
   if (s.responsesDir) mkdirSync(s.responsesDir, { recursive: true });
@@ -52,14 +85,13 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     if (!apiKey) return { error: { kind: 'no-key', message: 'no API key in the environment (FORGE_LLM_API_KEY)' } };
     const started = Date.now(); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), s.timeoutMs);
     try {
-      const response = await fetchImpl(s.endpoint, { method: 'POST', signal: controller.signal,
-        headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': s.version },
-        body: JSON.stringify({ ...params, system: request.prompt.system, messages: [{ role: 'user', content: request.prompt.user }] }) });
+      const made = PROVIDERS[s.provider].request(s, params, request.prompt, apiKey);
+      const response = await fetchImpl(s.endpoint, { method: 'POST', signal: controller.signal, headers: made.headers, body: JSON.stringify(made.body) });
       const body = await response.text();
       if (!response.ok) return { error: { kind: 'http', message: redact(`HTTP ${response.status}: ${body.slice(0, 300)}`, env) }, latencyMs: Date.now() - started };
       const data = JSON.parse(body);
-      const text = (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
-      return { raw: text, usage: data.usage ?? {}, latencyMs: Date.now() - started, stopReason: data.stop_reason ?? null };
+      const read = PROVIDERS[s.provider].read(data);
+      return { raw: read.text, usage: read.usage, latencyMs: Date.now() - started, stopReason: read.stopReason };
     } catch (error) {
       return { error: { kind: error?.name === 'AbortError' ? 'timeout' : 'http', message: redact(String(error?.message ?? error), env) }, latencyMs: Date.now() - started };
     } finally { clearTimeout(timer); }
@@ -85,12 +117,12 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
     stats.calls += 1;
     if (result.error) {
       stats.errors[result.error.kind] = (stats.errors[result.error.kind] ?? 0) + 1;
-      ledger?.record({ id: request.id, usd: 0, model: s.model, endpoint: endpointHost, error: result.error.kind, latencyMs: result.latencyMs });
+      ledger?.record({ id: request.id, usd: 0, model: s.model, provider: s.provider, set: s.set ?? null, endpoint: endpointHost, error: result.error.kind, latencyMs: result.latencyMs });
       return { ...base, choice: null, error: result.error, latencyMs: result.latencyMs };
     }
     const usd = priceOf(result.usage, s.pricePerMTok);
     stats.usd += usd; stats.usage.input_tokens += result.usage.input_tokens ?? 0; stats.usage.output_tokens += result.usage.output_tokens ?? 0;
-    ledger?.record({ id: request.id, usd, model: s.model, endpoint: endpointHost, usage: result.usage, latencyMs: result.latencyMs });
+    ledger?.record({ id: request.id, usd, model: s.model, provider: s.provider, set: s.set ?? null, endpoint: endpointHost, usage: result.usage, latencyMs: result.latencyMs });
     if (file) writeFileSync(file, JSON.stringify({ raw: result.raw, usage: result.usage, latencyMs: result.latencyMs, model: s.model, params, at: new Date().toISOString() }));
     const parsed = parseAnswer(result.raw, request.candidates.length);
     if (parsed.error) stats.errors[parsed.error.kind] = (stats.errors[parsed.error.kind] ?? 0) + 1;

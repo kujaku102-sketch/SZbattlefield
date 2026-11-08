@@ -1,16 +1,29 @@
 // A worker process: plays the jobs the orchestrator sends it, one at a time, and answers with the result.
 import { loadCpu } from '../cpus/index.mjs';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { playGame } from './play.mjs';
+import { inScope } from './teachers/llm.mjs';
 
 let llmTeacher = null;
 async function makeLlmTeacher(limits, workers) {
   const { createLlmTeacher } = await import('./teachers/llm.mjs');
   const settings = JSON.parse(readFileSync(limits.llmConfig, 'utf8'));
+  // a set of questions has a limit of its own: what the files of the set (ledgerDir/<set>*.jsonl, one for each process) already hold is spent
+  if (settings.set && settings.ledgerDir) {
+    let spentUsd = 0; let spentCalls = 0;
+    if (existsSync(settings.ledgerDir)) for (const name of readdirSync(settings.ledgerDir)) {
+      if (!(name === `${settings.set}.jsonl` || (name.startsWith(`${settings.set}-`) && name.endsWith('.jsonl')))) continue;
+      for (const line of readFileSync(path.join(settings.ledgerDir, name), 'utf8').split('\n')) { if (!line.trim()) continue; try { spentUsd += Number(JSON.parse(line).usd ?? 0); spentCalls += 1; } catch { /* a cut line */ } }
+    }
+    if (Number.isFinite(settings.maxUsd)) settings.maxUsd = Math.max(0, settings.maxUsd - spentUsd);
+    if (Number.isFinite(settings.maxCalls)) settings.maxCalls = Math.max(0, settings.maxCalls - spentCalls);
+    settings.ledgerFile = path.join(settings.ledgerDir, `${settings.set}-${process.pid}.jsonl`);
+  }
   // each process keeps to its share of the limit
   if (Number.isFinite(settings.maxUsd)) settings.maxUsd /= Math.max(1, workers ?? 1);
   if (Number.isFinite(settings.maxCalls)) settings.maxCalls = Math.floor(settings.maxCalls / Math.max(1, workers ?? 1));
-  if (settings.ledgerFile) settings.ledgerFile = settings.ledgerFile.replace(/(\.[^.]+)?$/, `-${process.pid}$1`);
+  if (settings.ledgerFile && !settings.set) settings.ledgerFile = settings.ledgerFile.replace(/(\.[^.]+)?$/, `-${process.pid}$1`);
   return createLlmTeacher(settings);
 }
 
@@ -30,7 +43,7 @@ process.on('message', async (message) => {
   if (limits.shadow === 'llm') {
     llmTeacher ??= await makeLlmTeacher(limits, workers);
     const compareCpu = limits.compare ? await loadCpu(limits.compare) : null;
-    shadow = { kind: 'llm', create: () => llmTeacher.create(), compare: compareCpu ? { create: () => compareCpu.create(gameDir) } : null, teacher: llmTeacher };
+    shadow = { kind: 'llm', create: () => llmTeacher.create(), compare: compareCpu ? { create: () => compareCpu.create(gameDir) } : null, teacher: llmTeacher, scope: llmTeacher.settings.scope ?? null, inScope };
   } else if (limits.shadow) {
     const shadowCpu = await loadCpu(limits.shadow);
     shadow = { create: () => shadowCpu.create(gameDir) };

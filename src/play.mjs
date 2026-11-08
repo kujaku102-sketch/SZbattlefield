@@ -155,6 +155,13 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
             const otherIntent = await other.choose({ query, queryAction: raw, commandId: `${commandId}c`, seatId: actor, sim: simView, baseline: base });
             compare = { cpu: other, sim: simView, intent: otherIntent };
           }
+          // the questions are kept to the decisions worth them (shadow.scope, from the settings of the model), judged on the looking-ahead teacher's answer
+          let skipTeacher = false;
+          if (isLlm && shadow.scope && compare) {
+            const lt = compare.intent?.ok ? compare.intent.value.action.type : null;
+            if (!shadow.inScope(shadow.scope, lt, compare.cpu.lastDecision?.why)) { shadowStats.outOfScope = (shadowStats.outOfScope ?? 0) + 1; skipTeacher = true; }
+          }
+          if (!skipTeacher) {
           const teacher = shadow.create();
           const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: isLlm ? undefined : simView, baseline: base });
           const kind = teacher.lastDecision?.kind;
@@ -168,6 +175,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
             const type = teacherIntent.value.action.type; const same = actionSignature(teacherIntent.value.action) === actionSignature(intent.value.action);
             shadowStats.n += 1; if (same) shadowStats.agree += 1;
             const t = (shadowStats.byType[type] ??= [0, 0]); t[0] += 1; if (same) t[1] += 1;
+          }
           }
         } catch (error) { note('shadow_error', { rev: status.revision, message: String(error?.message ?? error), stack: String(error?.stack ?? '').split(String.fromCharCode(10)).slice(0, 3).join(' | ') }); }
       }
