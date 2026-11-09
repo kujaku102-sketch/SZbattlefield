@@ -35,6 +35,11 @@ on:
       eval_seeds_beatzig:
         description: 'seeds of the evaluation against beatZIG gen2 (comma list)'
         default: '1,2'
+      sim_prior:
+        description: 'where a CPU that looks ahead (lookahead, deep, a reader) draws the hidden cards of the other side from: real = the decklist of the other side (the default, as before), seen = only what the seat has seen, the library and the rules of deck building'
+        type: choice
+        options: ['real', 'seen']
+        default: 'real'
       student_run:
         description: 'optional: the run id of an earlier run whose student (artifact bundle-weights) plays the records, the teacher answering every decision it makes (DAgger); empty = the teacher plays'
         default: ''
@@ -153,19 +158,21 @@ jobs:
           DECKS: ${{ inputs.decks }}
           STUDENT_RUN: ${{ inputs.student_run }}
           STUDENT_ROUND: ${{ inputs.student_round }}
+          SIM_PRIOR: ${{ inputs.sim_prior }}
         run: |
           decks=(); [ -n "$DECKS" ] && decks=(--decks "$DECKS")
+          sim=(); [ "$SIM_PRIOR" = "seen" ] && sim=(--sim-prior seen)
           teacher="lookahead${PERSONA:+?persona=$PERSONA}"       # the teacher plays with the persona's evaluation
           if [ -n "$STUDENT_RUN" ]; then
             # DAgger: the student of the earlier run plays, the teacher looks at every decision the student makes and writes what it would have done
             student="cpus/forged-loop$STUDENT_ROUND.mjs"
             cp "in/student/forged-loop$STUDENT_ROUND.mjs" "$student"
             if [ "$TABLE" = "ll" ]; then b="$teacher"; else b=simple; fi
-            node src/run.mjs --a "$student" --b "$b" --seeds "$SEEDS" --swap "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
+            node src/run.mjs --a "$student" --b "$b" --seeds "$SEEDS" --swap "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style "${sim[@]}" \
               --shadow "$teacher" --record "out/ore-$TABLE" --out "out/run-$TABLE-$SHARD"
           else
             if [ "$TABLE" = "ll" ]; then b="$teacher"; swap=(); else b=simple; swap=(--swap); fi
-            node src/run.mjs --a "$teacher" --b "$b" --seeds "$SEEDS" "${swap[@]}" "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style \
+            node src/run.mjs --a "$teacher" --b "$b" --seeds "$SEEDS" "${swap[@]}" "${decks[@]}" --shard "$SHARD/4" --workers 3 --max-matches 1500 --style "${sim[@]}" \
               --record "out/ore-$TABLE" --out "out/run-$TABLE-$SHARD"
           fi
       - uses: actions/upload-artifact@v7
@@ -301,8 +308,10 @@ jobs:
           SEEDS_LOOKAHEAD: ${{ inputs.eval_seeds_lookahead }}
           SEEDS_BEATZIG: ${{ inputs.eval_seeds_beatzig }}
           DECKS: ${{ inputs.decks }}
+          SIM_PRIOR: ${{ inputs.sim_prior }}
         run: |
           decks=(); [ -n "$DECKS" ] && decks=(--decks "$DECKS")
+          sim=(); [ "$SIM_PRIOR" = "seen" ] && sim=(--sim-prior seen)
           node forgehammer/packages/forge/bin/forge.mjs bundle verify in/weights
           cp "in/weights/forged-loop${ROUND}.mjs" "cpus/forged-loop${ROUND}.mjs"
           case "$TABLE" in
@@ -310,7 +319,7 @@ jobs:
             vs-lookahead) b=lookahead; seeds="$SEEDS_LOOKAHEAD" ;;
             *) b=cpus/release/gen2/beatZIG.mjs; seeds="$SEEDS_BEATZIG" ;;       # beatZIG gen2, the released generation 2
           esac
-          node src/run.mjs --a "cpus/forged-loop${ROUND}.mjs" --b "$b" --seeds "$seeds" --swap "${decks[@]}" --shard "$SHARD/2" --workers 3 --max-matches 1500 --style \
+          node src/run.mjs --a "cpus/forged-loop${ROUND}.mjs" --b "$b" --seeds "$seeds" --swap "${decks[@]}" --shard "$SHARD/2" --workers 3 --max-matches 1500 --style "${sim[@]}" \
             --out "out/$TABLE/shard-$SHARD-of-4"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -383,11 +392,13 @@ jobs:
           GAME_DIR: ${{ github.workspace }}/game
           GAME_COMMIT: ${{ inputs.game_commit }}
           SEEDS: ${{ inputs.record_seeds }}
+          SIM_PRIOR: ${{ inputs.sim_prior }}
           FORGE_ANTHROPIC_API_KEY: ${{ secrets.FORGE_ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
+          sim=(); [ "$SIM_PRIOR" = "seen" ] && sim=(--sim-prior seen)
           test -f llm/panel.json || { echo "llm/panel.json (the settings of the models) is not in the repository"; exit 1; }
-          node src/run.mjs --a lookahead --b simple --seeds "$SEEDS" --swap --shard 1/4 --workers 3 --max-matches 300 \
+          node src/run.mjs --a lookahead --b simple --seeds "$SEEDS" --swap --shard 1/4 --workers 3 --max-matches 300 "${sim[@]}" \
             --shadow llm --shadow-compare lookahead --llm-config llm/panel.json --record out/ore-llm --record-text --out out/run-llm
       - uses: actions/upload-artifact@v7
         if: always()

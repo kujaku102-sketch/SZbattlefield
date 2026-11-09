@@ -55,6 +55,11 @@ on:
         type: choice
         options: ['true', 'false']
         default: 'true'
+      sim_prior:
+        description: 'where a CPU that looks ahead (lookahead, deep, a reader) draws the hidden cards of the other side from: real = the decklist of the other side (the default, as before), seen = only what the seat has seen, the library and the rules of deck building'
+        type: choice
+        options: ['real', 'seen']
+        default: 'real'
       cpu_file:
         description: 'optional: the name of the forged CPU file that cpu_gz_b64 holds (forged-<name>.mjs)'
         default: ''
@@ -166,6 +171,7 @@ jobs:
           STYLE: ${{ inputs.style }}
           TOTAL: ${{ inputs.shard_total }}
           SHARD: ${{ matrix.shard }}
+          SIM_PRIOR: ${{ inputs.sim_prior }}
         run: |
           extra=()
           [ "$SWAP" = "true" ] && extra+=(--swap)
@@ -173,6 +179,7 @@ jobs:
           [ "$RECORD" = "true" ] && extra+=(--record "out/$TABLE/ore")
           [ "$STYLE" = "true" ] && extra+=(--style)
           [ -n "$DECKS" ] && extra+=(--decks "$DECKS")
+          [ "$SIM_PRIOR" = "seen" ] && extra+=(--sim-prior seen)
           node src/run.mjs --a "$CPU_A" --b "$CPU_B" --seeds "$SEEDS" "${extra[@]}" --shard "$SHARD/$TOTAL" --workers 3 --max-matches 1500 \
             --out "out/$TABLE/shard-$SHARD-of-$TOTAL"
       - uses: actions/upload-artifact@v7
