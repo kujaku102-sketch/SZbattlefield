@@ -258,7 +258,9 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       } else {
         note('illegal_move', {
           seat: actor, revision: status.revision, action: intent.value.action?.type ?? null, kind,
-          code: submitted.ok ? submitted.value?.receipt?.reasonCode ?? null : submitted.error?.code ?? null
+          code: submitted.ok ? submitted.value?.receipt?.reasonCode ?? null : submitted.error?.code ?? null,
+          // what was answered and what window it was (to tell a fault of the CPU's answer from a fault of the game)
+          ...(query.requiredInput ? { given: intent.value.action, window: { purpose: query.requiredInput.purpose ?? null, presentationKey: query.requiredInput.presentationKey ?? null, optional: query.requiredInput.optional ?? null, constraints: query.requiredInput.constraints ?? null, options: (query.requiredInput.options ?? []).map((option) => option.optionId) } } : {})
         });
         idle += 1; if (idle >= limits.idle) { result.status = 'stuck'; break; }
       }
