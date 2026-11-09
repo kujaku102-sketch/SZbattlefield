@@ -1,7 +1,8 @@
 {
   "name": "control",
+  "version": 2,
   "jp": "コントロール",
-  "note": "Cards in the registry count most (it builds up there), cards in hand and the fortress STR race count less; one's own STR is kept dear (ownStr), taking down the other side's board counts extra (oppBoard), attackers that are ready count little: it builds up, answers their cards, trades, and goes at the user less. Measured on 98 matches each way against simple: registry 2.9 at the end of its turns (beatdown CPUs 2.3-2.8), attacks at cards 18% (13%), trades 0.5 a match (0.3), kills 0.9 (0.5).",
+  "note": "Version 2 (2026-11-10): the memory weight is -0.1 (version 1: +0.2, which kept memory back): the CPU leaves memory over a little less often when everything else is equal, and the board and the situation still decide first (measured on 400 matches each against simple, game f9d9e2b: 64.0% -> 66.8%, memory left 0.99 -> 0.87, the style the same; against version 1 51.7%). Cards in the registry count most (it builds up there), cards in hand and the fortress STR race count less; one's own STR is kept dear (ownStr), taking down the other side's board counts extra (oppBoard), attackers that are ready count little: it builds up, answers their cards, trades, and goes at the user less. Measured on 98 matches each way against simple: registry 2.9 at the end of its turns (beatdown CPUs 2.3-2.8), attacks at cards 18% (13%), trades 0.5 a match (0.3), kills 0.9 (0.5).",
   "weights": {
     "str": 1,
     "ownStr": 2.5,
@@ -11,7 +12,7 @@
     "hand": 2.2,
     "registry": 2.8,
     "back": 0.8,
-    "memory": 0.2,
+    "memory": -0.1,
     "hp": 0.6
   },
   "colorAdjust": {}
