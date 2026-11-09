@@ -243,6 +243,8 @@ jobs:
         env:
           HAMMER: ${{ inputs.hammer_args }}
           ROUND: ${{ inputs.round }}
+          # the learner reads the records into the node heap (3,500 matches / 1.5 million candidates ran past its default, about 3.4 GB: run 42678798741); the runner has 16 GB
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           forge="node forgehammer/packages/forge/bin/forge.mjs"
           $forge bundle verify in/ore
