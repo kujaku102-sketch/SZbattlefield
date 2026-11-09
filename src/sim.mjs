@@ -7,6 +7,11 @@
 //                               the random generator is re-seeded. The cards drawn from are the decklist minus the cards the seat can see by
 //                               the rules (rulebook 4.5: the controller of a face-down card may look at it, the opponent may not), never the
 //                               real hidden cards. A card an effect created is not a deck card and is not subtracted.
+//   prior (SZB_SIM_PRIOR, --sim-prior of run.mjs): where the opponent's hidden cards are drawn from.
+//     real  the opponent's decklist minus the cards the seat has seen (what this module always did; the seat's own deck is always its own list).
+//     seen  only what the seat could know (the rule the game's CPU keeps: a CPU does not use the other side's deck): the cards of the library that the rules let a deck hold, of the
+//           colours the seat has seen of that side (every colour while it has seen none), each with a weight of 1 plus 4 for each copy the seat has seen, no more copies of a name than the
+//           rules allow (the other user card's same-name rule is public) less the copies the seat has seen. The opponent's decklist is not read.
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
@@ -28,8 +33,10 @@ export async function loadSim(gameDir) {
     prepare: await imp('src/game/core/prepare.js'),
     rng: await imp('src/game/runtime/rng.js'),
     cards: await imp('src/data/cards.js'),
-    decks: await imp('src/data/start-decks.js')
+    decks: await imp('src/data/start-decks.js'),
+    builder: await imp('src/game/deck-builder.js').catch(() => null)
   };
+  const PRIOR = process.env.SZB_SIM_PRIOR === 'seen' ? 'seen' : 'real';
   const DECKLISTS = Object.fromEntries(G.decks.START_DECKS.map((deck) => [deck.id, deck.cards]));
   // a deck is named by a start deck id, or given as its list { card id: copies } (a custom deck: src/decks.mjs)
   const listOf = (deck) => (typeof deck === 'string' ? DECKLISTS[deck] : deck) ?? {};
@@ -99,6 +106,34 @@ export async function loadSim(gameDir) {
     return slots;
   }
 
+  // The 'seen' prior: a list of `count` card ids for one side's hidden slots, from what the seat has seen of that side and the rules of deck building (see the head of this file).
+  const COPY_CAP_UNLIMITED = 6;
+  function seenPool(holder, seenCounts, count, rand) {
+    const deckRule = holder.user?.deckRule ?? '';
+    const sameName = Number(deckRule.match(/同名(d+)枚/)?.[1] ?? 3);
+    const rule = { sameName, sameNameByUser: /同名d+枚/.test(deckRule) };
+    const library = G.builder?.BUILDABLE_CARDS ?? Object.values(G.cards.CARD_LIBRARY).filter((card) => /^STD-d{3}$/.test(card.id) && !card.token && !['VOb', 'Plugin'].includes(card.category));
+    const limitOf = (card) => { const limit = G.builder?.copyLimit ? G.builder.copyLimit(card, rule) : sameName; return Number.isFinite(limit) ? limit : COPY_CAP_UNLIMITED; };
+    const colours = new Set(Object.keys(seenCounts).map((id) => G.cards.CARD_LIBRARY[id]?.color).filter(Boolean));
+    const entries = [];
+    for (const card of library) {
+      if (colours.size > 0 && card.color && !colours.has(card.color)) continue;
+      const seenCopies = seenCounts[card.id] ?? 0;
+      entries.push({ id: card.id, left: Math.max(0, limitOf(card) - seenCopies), weight: 1 + 4 * seenCopies });
+    }
+    const pool = [];
+    let total = entries.reduce((sum, entry) => sum + (entry.left > 0 ? entry.weight : 0), 0);
+    for (let n = 0; n < count && total > 0; n += 1) {
+      let at = rand() * total;
+      for (const entry of entries) {
+        if (entry.left <= 0) continue;
+        if (at < entry.weight) { pool.push(entry.id); entry.left -= 1; if (entry.left === 0) total -= entry.weight; break; }
+        at -= entry.weight;
+      }
+    }
+    return pool;
+  }
+
   // engine: the real state (read to copy it and to count what the seat sees); deckIds: { player, ai } start deck ids, or the lists of custom decks.
   // Returns { state, ms: { clone, derive, fill, total }, plan } (plan: per owner, the pool and the slots; used by the checks).
   function determinize(engine, viewerPlayer, seatIds, deckIds, rand) {
@@ -111,12 +146,18 @@ export async function loadSim(gameDir) {
     const visible = visibleCounts(engine, viewerPlayer, seatIds, deckLimit);
     const owners = [['player', seatIds[0], deckIds.player], ['ai', seatIds[1], deckIds.ai]];
     const plan = owners.map(([player, seat, deckId]) => {
-      const pool = [];
-      for (const [id, copies] of Object.entries(listOf(deckId))) {
-        const left = copies - (visible[seat][id] ?? 0);
-        for (let i = 0; i < left; i += 1) pool.push(id);
+      const slots = hiddenSlots(copy, viewerPlayer, player);
+      let pool = [];
+      if (PRIOR === 'seen' && player !== viewerPlayer) {
+        // the other side's list is not read; the pool is drawn in the order of the slots, so it is already shuffled
+        pool = seenPool(engine.players[player], visible[seat], slots.length, rand);
+      } else {
+        for (const [id, copies] of Object.entries(listOf(deckId))) {
+          const left = copies - (visible[seat][id] ?? 0);
+          for (let i = 0; i < left; i += 1) pool.push(id);
+        }
       }
-      return { player, seat, pool, slots: hiddenSlots(copy, viewerPlayer, player) };
+      return { player, seat, pool, slots };
     });
     const tDerive = msSince(t1);
 
@@ -126,9 +167,12 @@ export async function loadSim(gameDir) {
       const holder = copy.players[player];
       // The decklist minus the seen cards does not always explain every hidden slot (see probe/diagnose-pool.mjs). A slot the pool cannot
       // fill gets a card drawn from the decklist: a real hidden card is never left in place.
-      const list = Object.entries(listOf(deckIds[player]));
-      const listTotal = list.reduce((n, [, copies]) => n + copies, 0);
-      const drawFromList = () => { let at = Math.floor(rand() * listTotal); for (const [id, copies] of list) { if (at < copies) return id; at -= copies; } return list[0][0]; };
+      // (under the 'seen' prior the other side's pool always has a card for every slot, and its list is never read: asking for it is an error)
+      const drawFromList = PRIOR === 'seen' && player !== viewerPlayer ? () => { throw new Error('sim: the other side list was asked for under the seen prior'); } : (() => {
+        const list = Object.entries(listOf(deckIds[player]));
+        const listTotal = list.reduce((n, [, copies]) => n + copies, 0);
+        return () => { let at = Math.floor(rand() * listTotal); for (const [id, copies] of list) { if (at < copies) return id; at -= copies; } return list[0][0]; };
+      })();
       slots.forEach((slot, n) => {
         const fresh = simCard(pool[n] ?? drawFromList(), player, seat);
         if (slot.zone === 'deck') holder.deck[slot.index] = fresh;
