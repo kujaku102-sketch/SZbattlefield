@@ -71,6 +71,7 @@ CPU には「<系統>ZIG gen<世代>」の名前を付ける。置き場所は�
 - `gen2/beatZIG.mjs` — beatZIG gen2: 小さなネットワーク（v4 の特徴、隠れ 32）で手に点を付け、上位 2 手を読み手（再抽選した状態の評価）で選び直す。手本は deep と lookahead、Haiku 5.5（難所）、人の印。記録は `gen2/beatZIG.json`（学んだデータ、評価、時間）。前の世代の gen1 は比べる相手として残す。
 - `gen2/lightZIG.mjs` — lightZIG gen2: beatZIG gen2 と同じネットワークを読み手なしで使う、速くて軽い系統（凍結。のちに速さ重視で育てる）。記録は `gen2/lightZIG.json`。
 - 昔の名前: gen1 は `cpus/release/gen1.mjs`、gen2 は `cpus/release/gen2.mjs`、lightZIG gen2 は gen2-light だった。中身（重み・特徴・手の選び方）は変えていない。読み手の再抽選は試合の名前（CPU のファイル名を含む）から決まるので、ファイル名が変わると一部の試合の展開が変わる（強さは同じ）。
+- 凍結の手順: `node scripts/freeze-release.mjs --gen <N> --line <系統> --weights w.json --game <ゲームの checkout> [--topk k=2,reader=one,samples=2] [--evaluation e.json] [--timing t.json]`。forgehammer の smith で本体を作り、`cpus/learned/`（読み手があれば `topk-core.mjs` と `lookahead/{eval,playout}.mjs` も）を凍結コピーとして `<系統>/` に置き、sha256・重み・学んだ時のルール（ゲームの版）を `.json` に書く。部品がコミットされていないと止まる。何も測らない: 評価・時間は渡したものだけが記録に入る。読み返しは `--verify cpus/release/gen<N>/<系統>.json`。
 - 世代を上げる決め方: 新しい CPU を前の世代と直接戦わせ（両席、評価の seed）、勝率の 95% の幅の下の端が 50% を超えたら昇格の候補。最後に決めるのは人。
 
 ## 自分で組んだデッキ（decks/）
