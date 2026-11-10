@@ -120,9 +120,12 @@ jobs:
           [[ -z "$CPU_SHA" || "$CPU_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "cpu_sha256: 64 hex digits"; exit 1; }
           since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
           count=0
+          # a run that stopped in its check (a bad input, the limit) did no work and is not counted; every other run is, whatever way it ended
           for wf in loop-round.yml play-shards.yml; do
-            c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?created=%3E%3D${since}&per_page=50" --jq '[.workflow_runs[] | select(.id != '"${GITHUB_RUN_ID}"') | select(.conclusion != "cancelled" and .conclusion != "skipped")] | length')
-            count=$((count + c))
+            for id in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?created=%3E%3D${since}&per_page=50" --jq '.workflow_runs[] | select(.id != '"${GITHUB_RUN_ID}"') | select(.conclusion != "cancelled" and .conclusion != "skipped") | .id'); do
+              stopped=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs" --jq '[.jobs[] | select(.name == "check" and .conclusion == "failure")] | length')
+              if [ "$stopped" = 0 ]; then count=$((count + 1)); fi
+            done
           done
           echo "runs of loop-round / play-shards in the last 24 hours (not counting this one): $count (limit $MAX_RUNS_PER_DAY)"
           [ "$count" -lt "$MAX_RUNS_PER_DAY" ] || { echo "the day's limit of runs is reached"; exit 1; }
