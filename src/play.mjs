@@ -193,10 +193,10 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
               process.env.SZB_SIM_REFS = saved === 'keep' ? 'moved' : 'keep';
               const otherSim = host.open({ authority, seat: actor });
               const otherTeacher = shadow.create();
-              const otherIntent = await otherTeacher.choose({ query, queryAction: raw, commandId: `${commandId}r`, seatId: actor, sim: otherSim, baseline: base });
+              const otherIntent = await otherTeacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: otherSim, baseline: base });
               if (otherIntent?.ok) {
                 (result.refsCompare ??= []).push({ turn: query.observation?.turnNumber ?? null, moves: simView.moves.length, kind: teacher.lastDecision?.kind ?? null, why: teacher.lastDecision?.why ?? null,
-                  type: teacherIntent.value.action.type, otherType: otherIntent.value.action.type, same: actionSignature(otherIntent.value.action) === actionSignature(teacherIntent.value.action), mode: saved === 'keep' ? 'keep' : 'moved' });
+                  otherKind: otherTeacher.lastDecision?.kind ?? null, otherWhy: otherTeacher.lastDecision?.why ?? null, type: teacherIntent.value.action.type, otherType: otherIntent.value.action.type, same: actionSignature(otherIntent.value.action) === actionSignature(teacherIntent.value.action), mode: saved === 'keep' ? 'keep' : 'moved' });
               }
             } finally { if (saved === undefined) delete process.env.SZB_SIM_REFS; else process.env.SZB_SIM_REFS = saved; }
           }
