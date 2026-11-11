@@ -1,122 +1,198 @@
 {
-  "name": "lightZIG gen3",
-  "id": "lightZIG-gen3",
-  "line": "lightZIG",
-  "generation": 3,
-  "file": "cpus/release/gen3/lightZIG.mjs",
-  "what": "a small network scores the moves; no reader (fast and light)",
-  "module": {
-    "sha256": "4fb4a434303f84db4c9e165b09bbac1f193e5a72f2bd6dfad2c5ba0ebf8e5e03"
+ "name": "lightZIG gen3",
+ "id": "lightZIG-gen3",
+ "line": "lightZIG",
+ "generation": 3,
+ "file": "cpus/release/gen3/lightZIG.mjs",
+ "what": "a small network scores the moves; no reader (fast and light)",
+ "module": {
+  "sha256": "4fb4a434303f84db4c9e165b09bbac1f193e5a72f2bd6dfad2c5ba0ebf8e5e03"
+ },
+ "frozenCode": {
+  "note": "The CPU module imports only the copies in its own folder; cpus/learned/ and the others may change without changing how it plays. sha256 of each file with line endings read as LF; all = sha256 of the hashes in the order listed.",
+  "files": {
+   "candidates.mjs": "3f713fdab2f1599f21c61ff01e523b89b751a471de4613d4c54980759b9d82ab",
+   "features.mjs": "3aa6258959c4df3cdf427ba5afc613549d17eee4f92f1f86b35a6824f2de0b1f",
+   "loopguard.mjs": "5752eb5c4b58c45e144a7deddbdc51a21f7b6684b3dc9ed03ba084cd40ff74dc",
+   "mlp.mjs": "d4bbffe07c600df4c0701088453552a1596f9a8395b3e6d1c3347fa3eccc04ec",
+   "policy.mjs": "043ca1a8bb65e89ff39de1143e7c54c34c6422ecfb6cd1b027c474c1d5ce2f2d"
   },
-  "frozenCode": {
-    "note": "The CPU module imports only the copies in its own folder; cpus/learned/ and the others may change without changing how it plays. sha256 of each file with line endings read as LF; all = sha256 of the hashes in the order listed.",
-    "files": {
-      "candidates.mjs": "3f713fdab2f1599f21c61ff01e523b89b751a471de4613d4c54980759b9d82ab",
-      "features.mjs": "3aa6258959c4df3cdf427ba5afc613549d17eee4f92f1f86b35a6824f2de0b1f",
-      "loopguard.mjs": "5752eb5c4b58c45e144a7deddbdc51a21f7b6684b3dc9ed03ba084cd40ff74dc",
-      "mlp.mjs": "d4bbffe07c600df4c0701088453552a1596f9a8395b3e6d1c3347fa3eccc04ec",
-      "policy.mjs": "043ca1a8bb65e89ff39de1143e7c54c34c6422ecfb6cd1b027c474c1d5ce2f2d"
-    },
-    "all": "2a91022a7184574333189cebf6640cf74d55aff7ca87669a6f5e1d36ebde336f",
-    "takenAt": "commit 91f6d4f"
+  "all": "2a91022a7184574333189cebf6640cf74d55aff7ca87669a6f5e1d36ebde336f",
+  "takenAt": "commit 91f6d4f"
+ },
+ "weights": {
+  "digest": "e758e4945fc16609",
+  "featureVersion": 5,
+  "candidateFeatures": 120,
+  "stateFeatures": 62,
+  "network": {
+   "method": "mlp",
+   "hidden": 32
+  }
+ },
+ "learnedFor": {
+  "note": "The rules the data was played under. When the game's rules change (the first-turn draw, a card, a rule version), the data and this CPU are of the old rules: learn it again.",
+  "game": "f9d9e2bca14f75d84aa38b6c482b41d904e12d94",
+  "ruleVersion": "2.0-public-staging.20",
+  "cardVersion": "beta0.9.2-cards.16",
+  "firstTurnDraw": {
+   "first": 1,
+   "second": 2
+  }
+ },
+ "learnedFrom": {
+  "decisionsLearnedFrom": 75087,
+  "matches": 1715,
+  "teacher": "{\"a\":\"cpus/forged-loop1.mjs\",\"b\":\"lookahead\"}",
+  "validation": {
+   "n": 15613,
+   "top1": 0.740152437071671,
+   "top3": 0.9524114519951322,
+   "nll": 0.5916626053194723
   },
-  "weights": {
-    "digest": "e758e4945fc16609",
-    "featureVersion": 5,
-    "candidateFeatures": 120,
-    "stateFeatures": 62,
-    "network": {
-      "method": "mlp",
-      "hidden": 32
-    }
+  "method": {
+   "method": "mlp",
+   "hidden": 32,
+   "why": "all",
+   "advantage": "value",
+   "beta": 1,
+   "epochs": 25,
+   "lr": 0.01,
+   "l2": 0.0001,
+   "seed": 1
+  }
+ },
+ "evaluation": {
+  "note": "Strength = the share of matches won, both seat orders, every pair of the 7 start decks, game f9d9e2b (rule version 2.0-public-staging.20, cards beta0.9.2-cards.16), sim prior \"seen\" (what the seat has seen, never the other side's decklist); 95% range: Wilson. The lookahead it plays against is the one of SZbattlefield 42fbe3f (its re-drawn states say nothing of the real hidden cards); vsLookahead is measured again on it, the value before is in beforeTheStatesWereCleaned.",
+  "measuredAs": "the student of round 2 as a file with no reader (the lightZIG form), in the CI evaluation of loop round 2",
+  "vsSimple": {
+   "seeds": "1-10",
+   "matches": 980,
+   "win": 0.643,
+   "range95": [
+    0.612,
+    0.672
+   ],
+   "wins": 630,
+   "losses": 350,
+   "draws": 0
   },
-  "learnedFor": {
-    "note": "The rules the data was played under. When the game's rules change (the first-turn draw, a card, a rule version), the data and this CPU are of the old rules: learn it again.",
-    "game": "f9d9e2bca14f75d84aa38b6c482b41d904e12d94",
-    "ruleVersion": "2.0-public-staging.20",
-    "cardVersion": "beta0.9.2-cards.16",
-    "firstTurnDraw": {
-      "first": 1,
-      "second": 2
-    }
+  "vsLookahead": {
+   "seeds": "1-5",
+   "matches": 490,
+   "win": 0.439,
+   "range95": [
+    0.395,
+    0.483
+   ],
+   "wins": 215,
+   "losses": 275,
+   "draws": 0,
+   "measuredAs": "the released file, game f9d9e2b, sim prior seen, by hand, after 42fbe3f"
   },
-  "learnedFrom": {
-    "decisionsLearnedFrom": 75087,
-    "matches": 1715,
-    "teacher": "{\"a\":\"cpus/forged-loop1.mjs\",\"b\":\"lookahead\"}",
-    "validation": {
-      "n": 15613,
-      "top1": 0.740152437071671,
-      "top3": 0.9524114519951322,
-      "nll": 0.5916626053194723
-    },
-    "method": {
-      "method": "mlp",
-      "hidden": 32,
-      "why": "all",
-      "advantage": "value",
-      "beta": 1,
-      "epochs": 25,
-      "lr": 0.01,
-      "l2": 0.0001,
-      "seed": 1
-    }
+  "vsBeatZigGen2": {
+   "seeds": "1-2",
+   "matches": 196,
+   "win": 0.434,
+   "range95": [
+    0.366,
+    0.504
+   ],
+   "wins": 85,
+   "losses": 111,
+   "draws": 0,
+   "opponent": "cpus/release/gen2/beatZIG.mjs"
   },
-  "evaluation": {
-    "note": "Strength = the share of matches won, both seat orders, every pair of the 7 start decks, game f9d9e2b (rule version 2.0-public-staging.20, cards beta0.9.2-cards.16), sim prior \"seen\" (what the seat has seen, never the other side's decklist); 95% range: Wilson.",
-    "measuredAs": "the student of round 2 as a file with no reader (the lightZIG form), in the CI evaluation of loop round 2",
-    "vsSimple": {
-      "seeds": "1-10",
-      "matches": 980,
-      "win": 0.643,
-      "range95": [
-        0.612,
-        0.672
-      ],
-      "wins": 630,
-      "losses": 350,
-      "draws": 0
-    },
-    "vsLookahead": {
-      "seeds": "1-5",
-      "matches": 490,
-      "win": 0.437,
-      "range95": [
-        0.393,
-        0.481
-      ],
-      "wins": 214,
-      "losses": 276,
-      "draws": 0
-    },
-    "vsBeatZigGen2": {
-      "seeds": "1-2",
-      "matches": 196,
-      "win": 0.434,
-      "range95": [
-        0.366,
-        0.504
-      ],
-      "wins": 85,
-      "losses": 111,
-      "draws": 0,
-      "opponent": "cpus/release/gen2/beatZIG.mjs"
-    },
-    "anomalies": {
-      "matches": 1666,
-      "count": 0,
-      "note": "refused window answers, stopped or capped matches, exceptions: none"
-    },
-    "checkAfterFreeze": "196 of 196 matches against simple (seed 2, both orders, all deck pairs) identical (same hash of every command and the final state) to the same CPU before it was frozen; 139 wins, 57 losses."
+  "anomalies": {
+   "matches": 1666,
+   "count": 0,
+   "note": "refused window answers, stopped or capped matches, exceptions: none (the 490 matches against the cleaned lookahead too)"
   },
-  "timePerDecision": {
-    "note": "choose() of the CPU, no reader. The CPU against itself, 12 matches, 2 passes, one worker, a desktop (i5-9600K) at about 30% load; the sim prior is \"seen\". Milliseconds. The device the game runs on is not measured.",
-    "median": 3.2,
-    "p95": 5.1,
-    "p99": 6.4,
-    "max": 27,
-    "mean": 2.7
+  "checkAfterFreeze": "196 of 196 matches against simple (seed 2, both orders, all deck pairs) identical (same hash of every command and the final state) to the same CPU before it was frozen; 139 wins, 57 losses.",
+  "beforeTheStatesWereCleaned": {
+   "vsLookahead": {
+    "seeds": "1-5",
+    "matches": 490,
+    "win": 0.437,
+    "range95": [
+     0.393,
+     0.481
+    ],
+    "wins": 214,
+    "losses": 276,
+    "draws": 0
+   }
+  }
+ },
+ "timePerDecision": {
+  "note": "choose() of the CPU, no reader. The CPU against itself, 12 matches, 2 passes, one worker, a desktop (i5-9600K) at about 30% load; the sim prior is \"seen\". Milliseconds. The device the game runs on is not measured. Measured again after 42fbe3f, the game's own lightZIG (src/cpu/zig, through createCpu) and this file played the same: 12 matches, 2 passes each.",
+  "median": 3.6,
+  "p95": 6.3,
+  "p99": 9,
+  "max": 34,
+  "mean": 3.1,
+  "game": {
+   "median": 3.55,
+   "p95": 6,
+   "p99": 7.8,
+   "max": 20
+  }
+ },
+ "playsOnly": "what the seat can see (its own query); no sim, no hidden information of the other side.",
+ "frozenAt": "2026-11-11T10:46:43.767Z",
+ "previousEvaluation": {
+  "note": "Strength = the share of matches won, both seat orders, every pair of the 7 start decks, game f9d9e2b (rule version 2.0-public-staging.20, cards beta0.9.2-cards.16), sim prior \"seen\" (what the seat has seen, never the other side's decklist); 95% range: Wilson.",
+  "measuredAs": "the student of round 2 as a file with no reader (the lightZIG form), in the CI evaluation of loop round 2",
+  "vsSimple": {
+   "seeds": "1-10",
+   "matches": 980,
+   "win": 0.643,
+   "range95": [
+    0.612,
+    0.672
+   ],
+   "wins": 630,
+   "losses": 350,
+   "draws": 0
   },
-  "playsOnly": "what the seat can see (its own query); no sim, no hidden information of the other side.",
-  "frozenAt": "2026-11-11T10:46:43.767Z"
+  "vsLookahead": {
+   "seeds": "1-5",
+   "matches": 490,
+   "win": 0.437,
+   "range95": [
+    0.393,
+    0.481
+   ],
+   "wins": 214,
+   "losses": 276,
+   "draws": 0
+  },
+  "vsBeatZigGen2": {
+   "seeds": "1-2",
+   "matches": 196,
+   "win": 0.434,
+   "range95": [
+    0.366,
+    0.504
+   ],
+   "wins": 85,
+   "losses": 111,
+   "draws": 0,
+   "opponent": "cpus/release/gen2/beatZIG.mjs"
+  },
+  "anomalies": {
+   "matches": 1666,
+   "count": 0,
+   "note": "refused window answers, stopped or capped matches, exceptions: none"
+  },
+  "checkAfterFreeze": "196 of 196 matches against simple (seed 2, both orders, all deck pairs) identical (same hash of every command and the final state) to the same CPU before it was frozen; 139 wins, 57 losses."
+ },
+ "previousTimePerDecision": {
+  "note": "choose() of the CPU, no reader. The CPU against itself, 12 matches, 2 passes, one worker, a desktop (i5-9600K) at about 30% load; the sim prior is \"seen\". Milliseconds. The device the game runs on is not measured.",
+  "median": 3.2,
+  "p95": 5.1,
+  "p99": 6.4,
+  "max": 27,
+  "mean": 2.7
+ }
 }

@@ -118,12 +118,25 @@
   "checkAfterFreeze": "The beatZIG the game ships (src/cpu/zig/beatZIG.mjs, read ahead with src/cpu/lookahead) plays the same matches as this file: 980 of 980 matches against simple (seeds 1-10, both orders, all deck pairs) identical, the hash of every command, the outcome and the turns (src/compare-shipped.mjs, --plain-match-id, rule version staging.20)."
  },
  "timePerDecision": {
-  "note": "choose() of the CPU with the reader. The CPU against itself, 12 matches, 2 passes, one worker, a desktop (i5-9600K) at about 30% load; the sim prior is \"seen\"; the time includes the bench opening the sim (re-drawing the hidden cards), which a device would do in its own way. Milliseconds. The device the game runs on is not measured.",
-  "median": 28.4,
-  "p95": 34.5,
-  "p99": 55.8,
-  "max": 77,
-  "mean": 21.7
+  "note": "choose() of the CPU with the reader, after SZbattlefield 42fbe3f (the re-drawn states have the references moved to the drawn cards). The CPU against itself, 12 matches, 2 passes, one worker, a desktop (i5-9600K) with nothing else running; sim prior \"seen\"; the time includes the bench opening the sim (re-drawing the hidden cards), which a device would do in its own way. The game's own beatZIG (src/cpu/zig with src/cpu/lookahead, through createCpu) was measured the same way. Milliseconds. The device the game runs on is not measured.",
+  "median": 34.2,
+  "p95": 41.4,
+  "p99": 45,
+  "max": 66,
+  "mean": 25.7,
+  "game": {
+   "median": 34.5,
+   "p95": 42.4,
+   "p99": 46.3,
+   "max": 64,
+   "mean": 26.1
+  },
+  "beforeTheStatesWereCleaned": {
+   "median": 28.4,
+   "p95": 34.5,
+   "p99": 44.5,
+   "max": 77
+  }
  },
  "playsOnly": "what the seat can see (its own query) and the states the reader re-draws of what it cannot see; no hidden information of the other side.",
  "frozenAt": "2026-11-11T10:46:44.150Z",
@@ -161,5 +174,13 @@
    "note": "refused window answers, stopped or capped matches, exceptions: none"
   },
   "checkAfterFreeze": "196 matches against simple (seed 2, both orders, all deck pairs): 137 wins, 59 losses, the same count as before it was frozen; 187 of the 196 matches identical (the reader's re-drawn states follow the match name, which is the file name of the CPU, so some matches play out differently under another name)."
+ },
+ "previousTimePerDecision": {
+  "note": "choose() of the CPU with the reader. The CPU against itself, 12 matches, 2 passes, one worker, a desktop (i5-9600K) at about 30% load; the sim prior is \"seen\"; the time includes the bench opening the sim (re-drawing the hidden cards), which a device would do in its own way. Milliseconds. The device the game runs on is not measured.",
+  "median": 28.4,
+  "p95": 34.5,
+  "p99": 55.8,
+  "max": 77,
+  "mean": 21.7
  }
 }
