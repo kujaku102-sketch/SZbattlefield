@@ -17,17 +17,27 @@
 // `replaced` is [{ uid, id, name, fresh }]: the real card's uid, card id and name, and the card drawn for it. A card that was mounted on a replaced card goes with it (the same entry, its own
 // uid). `compiled` (the card's compiled effect) is shared with the real state and is read only: it is never entered.
 
-const escapePattern = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const isCard = (value) => typeof value.uid === 'string' && typeof value.id === 'string' && 'category' in value;
 
 export function remapReferences(state, replaced) {
   if (replaced.length === 0) return;
   const byUid = new Map(replaced.map((entry) => [entry.uid, entry]));
   const byFreshUid = new Map(replaced.map((entry) => [entry.fresh.uid, entry]));
-  // a uid inside a longer string ("...:rt:i:79"), where a longer uid is tried before a shorter one that starts the same ("rt:i:79" before "rt:i:7")
-  const uidPattern = new RegExp(`(${[...byUid.keys()].sort((a, b) => b.length - a.length).map(escapePattern).join('|')})(?![0-9A-Za-z_])`, 'g');
-  const mapUid = (text) => (byUid.has(text) ? byUid.get(text).fresh.uid : text.replace(uidPattern, (found) => byUid.get(found).fresh.uid));
-  const namedIn = (text) => [...text.matchAll(uidPattern)].map((found) => byUid.get(found[0]));
+  // The uids in a text, found by hand (a pattern would need the uids escaped, and the public build's check reads the escape as the start of a network path): at each place, the longest uid
+  // that starts there ("rt:i:79" before "rt:i:7") and is not followed by a letter, a digit or an underscore ("rt:i:7" is not in "rt:i:78"). visit(entry) is told of each, and gives what to write.
+  const uidsByFirst = new Map();
+  for (const uid of [...byUid.keys()].sort((x, y) => y.length - x.length)) uidsByFirst.set(uid[0], [...(uidsByFirst.get(uid[0]) ?? []), uid]);
+  const isWordCharacter = (character) => character !== undefined && ((character >= '0' && character <= '9') || (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || character === '_');
+  const scan = (text, visit) => {
+    let out = '';
+    for (let at = 0; at < text.length;) {
+      const found = (uidsByFirst.get(text[at]) ?? []).find((uid) => text.startsWith(uid, at) && !isWordCharacter(text[at + uid.length]));
+      if (found === undefined) { out += text[at]; at += 1; } else { out += visit(byUid.get(found)); at += found.length; }
+    }
+    return out;
+  };
+  const mapUid = (text) => (byUid.has(text) ? byUid.get(text).fresh.uid : scan(text, (entry) => entry.fresh.uid));
+  const namedIn = (text) => { const entries = []; scan(text, (entry) => { entries.push(entry); return ''; }); return entries; };
 
   // what belongs to a moment of the real match
   if (Array.isArray(state.activationWindows)) state.activationWindows = state.activationWindows.filter((window) => !byUid.has(window?.source?.card?.uid));
