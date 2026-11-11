@@ -1,0 +1,119 @@
+{
+  "name": "beatZIG gen3",
+  "id": "beatZIG-gen3",
+  "line": "beatZIG",
+  "generation": 3,
+  "file": "cpus/release/gen3/beatZIG.mjs",
+  "what": "a small network scores the moves; a reader (\"one\", k=2) looks at the best 2 by score on re-drawn states and picks the better",
+  "module": {
+    "sha256": "2240b1ded0a677c5f3e1a68efe3b3f6b7089417c375cf6b2a8ec9fd7fd9eac23"
+  },
+  "frozenCode": {
+    "note": "The CPU module imports only the copies in its own folder; cpus/learned/ and the others may change without changing how it plays. sha256 of each file with line endings read as LF; all = sha256 of the hashes in the order listed.",
+    "files": {
+      "candidates.mjs": "87bb832ea37da025bff9dc72a3c14361b5088da0c75ae0ae367048e263fd5a7f",
+      "eval.mjs": "dc564112b65b8d2e28aa76bc5b013d0ab8c717fd7baa08a4f651a54595b09dde",
+      "features.mjs": "42a4a29f6d67b891ebe2b788644182b9f4ecde0c6725844d371824147c792b83",
+      "loopguard.mjs": "2f75df60e25d817dadd9c47f8b2119d12686f7d62f678a1489e9c2fa1962985b",
+      "mlp.mjs": "840a462a3c9d143ac98c7933d55d1b0ca4d14ee97c1b477baecc13fd5abc159b",
+      "playout.mjs": "72e824d27d371c56756499ec48c4568694216e5f6e0cbe3e2295458b63efe221",
+      "policy.mjs": "a1a208697a3df1f7739a5070f3a95a2f05e4c3177cce7d784bef7666c4562dda",
+      "topk-core.mjs": "da7b1808d7c06f43db67ddc9f147ac62d55e3d6900473182662a3fdc06fdcd89"
+    },
+    "all": "cc38a055934a754ceccb41f42e604ace4aa0d8397327f5d8e69cd4eb8dded314",
+    "takenAt": "commit 91f6d4f"
+  },
+  "weights": {
+    "digest": "e758e4945fc16609",
+    "featureVersion": 5,
+    "candidateFeatures": 120,
+    "stateFeatures": 62,
+    "network": {
+      "method": "mlp",
+      "hidden": 32
+    },
+    "sameAs": "lightZIG"
+  },
+  "reader": {
+    "kind": "one",
+    "k": 2,
+    "samples": 2
+  },
+  "learnedFor": {
+    "note": "The rules the data was played under. When the game's rules change (the first-turn draw, a card, a rule version), the data and this CPU are of the old rules: learn it again.",
+    "game": "f9d9e2bca14f75d84aa38b6c482b41d904e12d94",
+    "ruleVersion": "2.0-public-staging.20",
+    "cardVersion": "beta0.9.2-cards.16",
+    "firstTurnDraw": {
+      "first": 1,
+      "second": 2
+    }
+  },
+  "learnedFrom": {
+    "decisionsLearnedFrom": 75087,
+    "matches": 1715,
+    "teacher": "{\"a\":\"cpus/forged-loop1.mjs\",\"b\":\"lookahead\"}",
+    "validation": {
+      "n": 15613,
+      "top1": 0.740152437071671,
+      "top3": 0.9524114519951322,
+      "nll": 0.5916626053194723
+    },
+    "method": {
+      "method": "mlp",
+      "hidden": 32,
+      "why": "all",
+      "advantage": "value",
+      "beta": 1,
+      "epochs": 25,
+      "lr": 0.01,
+      "l2": 0.0001,
+      "seed": 1
+    }
+  },
+  "evaluation": {
+    "note": "Strength = the share of matches won, both seat orders, every pair of the 7 start decks, game f9d9e2b (rule version 2.0-public-staging.20, cards beta0.9.2-cards.16), sim prior \"seen\" (what the seat has seen, never the other side's decklist); 95% range: Wilson.",
+    "measuredAs": "the same network and the reader (topk k=2, reader one, samples 2), played from a file of its own before freezing; 980 and 490 matches against simple and lookahead",
+    "vsSimple": {
+      "seeds": "1-10",
+      "matches": 980,
+      "win": 0.658,
+      "range95": [
+        0.628,
+        0.687
+      ],
+      "wins": 645,
+      "losses": 335,
+      "draws": 0
+    },
+    "vsLookahead": {
+      "seeds": "1-5",
+      "matches": 490,
+      "win": 0.465,
+      "range95": [
+        0.422,
+        0.51
+      ],
+      "wins": 228,
+      "losses": 262,
+      "draws": 0
+    },
+    "versusNoReader": "against the same network with no reader (lightZIG form): simple +1.5 points (z 0.71), lookahead +2.8 points (z 0.90): not different at this number of matches.",
+    "anomalies": {
+      "matches": 1470,
+      "count": 0,
+      "note": "refused window answers, stopped or capped matches, exceptions: none"
+    },
+    "checkAfterFreeze": "196 matches against simple (seed 2, both orders, all deck pairs): 137 wins, 59 losses, the same count as before it was frozen; 187 of the 196 matches identical (the reader's re-drawn states follow the match name, which is the file name of the CPU, so some matches play out differently under another name)."
+  },
+  "timePerDecision": {
+    "note": "choose() of the CPU with the reader. The CPU against itself, 12 matches, 2 passes, one worker, a desktop (i5-9600K) at about 30% load; the sim prior is \"seen\"; the time includes the bench opening the sim (re-drawing the hidden cards), which a device would do in its own way. Milliseconds. The device the game runs on is not measured.",
+    "median": 28.4,
+    "p95": 34.5,
+    "p99": 55.8,
+    "max": 77,
+    "mean": 21.7
+  },
+  "playsOnly": "what the seat can see (its own query) and the states the reader re-draws of what it cannot see; no hidden information of the other side.",
+  "frozenAt": "2026-11-11T10:46:44.150Z"
+}
