@@ -33,7 +33,11 @@ export async function describeEnv({ gameDir, cpuSpecs, limits, deckNames = [], s
     ...(deckNames.some((name) => !startIds.includes(name)) ? { decks: deckHashes(deckNames, startIds) } : {}),
     limits: { maxCommands: limits.maxCommands, maxWallMs: limits.maxWallMs, idle: limits.idle, maxRepeat: limits.maxRepeat },
     // where a CPU that looks ahead draws the other side's hidden cards from (--sim-prior seen); the default (real) adds nothing, so the keys of the tables made before stay as they were
-    ...(limits.simPrior ? { simPrior: limits.simPrior } : {})
+    ...(limits.simPrior ? { simPrior: limits.simPrior } : {}),
+    // the matches are named without the CPUs' file names (--plain-match-id): a CPU that looks ahead draws other states, so it is another table
+    ...(limits.plainMatchId ? { plainMatchId: true } : {}),
+    // the old copy of a state, whose references stay on the real hidden cards (--sim-refs keep); the default (moved) adds nothing
+    ...(limits.simRefs ? { simRefs: limits.simRefs } : {})
   };
   return {
     key,

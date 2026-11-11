@@ -60,7 +60,10 @@ export async function startDeckIds(gameDir) { return (await loadGame(gameDir)).d
 export async function playGame({ gameDir, job, cpus, limits, record: oreOut = null, shadow = null }) {
   const g = await loadGame(gameDir);
   const startIds = g.decks.START_DECKS.map((deck) => deck.id);
-  const matchId = `bench:${job.id}`;
+  // The match name seeds what a CPU that looks ahead re-draws, so it carries the CPU's file name. `plainMatchId` (run.mjs --plain-match-id) names the match by its decks, its seed and which side
+  // plays "simple" instead, so that the same CPU played from two files (the released one and the game's own) plays the same match (src/compare-shipped.mjs).
+  const plainName = (seat) => (job.cpus[seat] === 'simple' ? 'simple' : 'cpu');
+  const matchId = limits.plainMatchId ? `bench:${plainName('seat-a')}.${plainName('seat-b')}/${job.deckA}/${job.deckB}/${job.seed}` : `bench:${job.id}`;
   const anomalies = [];
   const oreLines = oreOut ? [] : null;
   const textLines = oreOut?.text ? [] : null;
@@ -132,6 +135,8 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
       let view = null;
       try {
         view = { query, queryAction, commandId, seatId: actor };
+        // An adapter for the CPU as the game ships it (cpus/game-cpu.mjs) makes its own lookahead from the game's own code, so it is handed the match (needsAuthority); no other CPU is.
+        if (cpus[actor].needsAuthority === true) view.authority = authority;
         if (cpus[actor].needsSim === true || cpus[actor].needsBaseline === true) view.baseline = () => baseline.choose({ query, queryAction, commandId, seatId: actor });
         if (cpus[actor].needsSim === true && query.requiredInput === null) view.sim = host.open({ authority, seat: actor });
         intent = await cpus[actor].choose(view);   // a CPU may answer with a promise (a teacher that is asked over the network)
@@ -180,6 +185,20 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
               judge = { winner: j.verdict === 0 ? 'llm' : j.verdict === 1 ? 'lookahead' : j.verdict, values: { llm: j.values[0], lookahead: j.values[1] }, samples: j.samples, spread: j.spread, ...(j.reason ? { reason: j.reason } : {}) };
             } catch (error) { judge = { winner: 'error', message: String(error?.message ?? error).slice(0, 200) }; }
             const tally = (shadowStats.judge ??= {}); tally[judge.winner] = (tally[judge.winner] ?? 0) + 1;
+          }
+          // the same decision asked of the teacher again on the other kind of re-drawn state (--compare-sim-refs): does what the copy says about the real hidden cards change what it chooses?
+          if (limits.refsCompare && !isLlm && teacherIntent?.ok && simView && simView.moves.length > 1) {
+            const saved = process.env.SZB_SIM_REFS;
+            try {
+              process.env.SZB_SIM_REFS = saved === 'keep' ? 'moved' : 'keep';
+              const otherSim = host.open({ authority, seat: actor });
+              const otherTeacher = shadow.create();
+              const otherIntent = await otherTeacher.choose({ query, queryAction: raw, commandId: `${commandId}r`, seatId: actor, sim: otherSim, baseline: base });
+              if (otherIntent?.ok) {
+                (result.refsCompare ??= []).push({ turn: query.observation?.turnNumber ?? null, moves: simView.moves.length, kind: teacher.lastDecision?.kind ?? null, why: teacher.lastDecision?.why ?? null,
+                  type: teacherIntent.value.action.type, otherType: otherIntent.value.action.type, same: actionSignature(otherIntent.value.action) === actionSignature(teacherIntent.value.action), mode: saved === 'keep' ? 'keep' : 'moved' });
+              }
+            } finally { if (saved === undefined) delete process.env.SZB_SIM_REFS; else process.env.SZB_SIM_REFS = saved; }
           }
           if (teacherIntent?.ok) {
             const line = recordDecision({ query, queryAction: raw, sim: isLlm ? null : simView, cpu: teacher, intent: teacherIntent, student: intent, compare,

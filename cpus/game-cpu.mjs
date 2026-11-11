@@ -31,12 +31,18 @@ export default {
     const loaded = await entry.preloadCpu(cpuId, { allowStale: true });
     if (!loaded.ok) throw new Error(`game-cpu: ${cpuId}: ${loaded.error?.code}`);
     let made = null;
+    let deckLimit = null;
     return {
+      // the bench hands the match to this adapter only (play.mjs), and the adapter hands it to the game's own lookahead host, as the game's session does (match-session-controller.js lookahead)
+      needsAuthority: true,
       choose(view) {
         // one CPU for one seat of one match, made when it first has to decide
         made ??= entry.createCpu({ cpuId, seatId: view.seatId, allowStale: true, clock: () => 0 });
         if (!made.ok) return { ok: false, error: made.error };
-        return made.value.policy(view.query, view.commandId, view.queryAction);
+        // how many cards the decks held at the start: the identity ledger of the match as the first decision finds it (the session reads it when the match is made; no token exists yet at the opening)
+        deckLimit ??= view.authority.engineState.runtimeContext.identityState.nextSerial - 1;
+        const lookahead = (host) => host.open({ authority: view.authority, seat: view.seatId, deckLimit });
+        return made.value.policy(view.query, view.commandId, view.queryAction, lookahead);
       }
     };
   }

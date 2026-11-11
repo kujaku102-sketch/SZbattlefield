@@ -7,6 +7,11 @@
 //                               the random generator is re-seeded. The cards drawn from are the decklist minus the cards the seat can see by
 //                               the rules (rulebook 4.5: the controller of a face-down card may look at it, the opponent may not), never the
 //                               real hidden cards. A card an effect created is not a deck card and is not subtracted.
+//   refs (SZB_SIM_REFS, --sim-refs of run.mjs): what the copy says about the real cards it replaced.
+//     moved (default) every reference to a replaced hidden card (the uid table's row, a window, a waiting choice, the last event, the turn it came into play, the other side's start deck id)
+//           is about the card drawn for it, so that nothing of the real card is in the copy and the engine, asked to try a move, answers from the drawn card (src/references.mjs).
+//           The same as the game's own src/cpu/lookahead (tests/cpu-lookahead.test.js).
+//     keep  the copy as this module made it before: the references stay on the real cards (the tables made before are of this).
 //   prior (SZB_SIM_PRIOR, --sim-prior of run.mjs): where the opponent's hidden cards are drawn from.
 //     real  the opponent's decklist minus the cards the seat has seen (what this module always did; the seat's own deck is always its own list).
 //     seen  only what the seat could know (the rule the game's CPU keeps: a CPU does not use the other side's deck): the cards of the library that the rules let a deck hold, of the
@@ -14,6 +19,7 @@
 //           rules allow (the other user card's same-name rule is public) less the copies the seat has seen. The opponent's decklist is not read.
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { remapReferences } from './references.mjs';
 
 const now = () => process.hrtime.bigint();
 const msSince = (t) => Number(now() - t) / 1e6;
@@ -37,6 +43,7 @@ export async function loadSim(gameDir) {
     builder: await imp('src/game/deck-builder.js').catch(() => null)
   };
   const PRIOR = process.env.SZB_SIM_PRIOR === 'seen' ? 'seen' : 'real';
+  const refsMode = () => (process.env.SZB_SIM_REFS === 'keep' ? 'keep' : 'moved');     // read at each re-draw (a tool that compares the two may switch it between two re-draws)
   const DECKLISTS = Object.fromEntries(G.decks.START_DECKS.map((deck) => [deck.id, deck.cards]));
   // a deck is named by a start deck id, or given as its list { card id: copies } (a custom deck: src/decks.mjs)
   const listOf = (deck) => (typeof deck === 'string' ? DECKLISTS[deck] : deck) ?? {};
@@ -87,11 +94,14 @@ export async function loadSim(gameDir) {
     return counts;
   }
 
-  let simSerial = 0;
-  function simCard(id, owner, ownerSeat) {
-    simSerial += 1;
-    return { ...G.cards.createCardInstance(id, owner, simSerial), uid: `sim:${simSerial}`, ownerSeat };
-  }
+  // a drawn card is numbered from 1 in each re-draw (a number that depended on how many states this process had made before would make a state depend on the process)
+  const simCardMaker = () => {
+    let simSerial = 0;
+    return (id, owner, ownerSeat) => {
+      simSerial += 1;
+      return { ...G.cards.createCardInstance(id, owner, simSerial), uid: `sim:${simSerial}`, ownerSeat };
+    };
+  };
 
   // The hidden slots of the viewer's view of a state: the deck always; for the opponent also its hand and its face-down cards
   // (on the board, in the registry, in the trash and the ban). The viewer's own face-down cards are not hidden from it.
@@ -110,9 +120,9 @@ export async function loadSim(gameDir) {
   const COPY_CAP_UNLIMITED = 6;
   function seenPool(holder, seenCounts, count, rand) {
     const deckRule = holder.user?.deckRule ?? '';
-    const sameName = Number(deckRule.match(/同名(d+)枚/)?.[1] ?? 3);
-    const rule = { sameName, sameNameByUser: /同名d+枚/.test(deckRule) };
-    const library = G.builder?.BUILDABLE_CARDS ?? Object.values(G.cards.CARD_LIBRARY).filter((card) => /^STD-d{3}$/.test(card.id) && !card.token && !['VOb', 'Plugin'].includes(card.category));
+    const sameName = Number(deckRule.match(/同名(\d+)枚/)?.[1] ?? 3);
+    const rule = { sameName, sameNameByUser: /同名\d+枚/.test(deckRule) };
+    const library = G.builder?.BUILDABLE_CARDS ?? Object.values(G.cards.CARD_LIBRARY).filter((card) => /^STD-\d{3}$/.test(card.id) && !card.token && !['VOb', 'Plugin'].includes(card.category));
     const limitOf = (card) => { const limit = G.builder?.copyLimit ? G.builder.copyLimit(card, rule) : sameName; return Number.isFinite(limit) ? limit : COPY_CAP_UNLIMITED; };
     const colours = new Set(Object.keys(seenCounts).map((id) => G.cards.CARD_LIBRARY[id]?.color).filter(Boolean));
     const entries = [];
@@ -138,7 +148,9 @@ export async function loadSim(gameDir) {
   // Returns { state, ms: { clone, derive, fill, total }, plan } (plan: per owner, the pool and the slots; used by the checks).
   function determinize(engine, viewerPlayer, seatIds, deckIds, rand) {
     const t0 = now();
+    const refs = refsMode();
     const copy = shareClone(engine);
+    const simCard = simCardMaker();
     const tClone = msSince(t0);
 
     const t1 = now();
@@ -162,6 +174,9 @@ export async function loadSim(gameDir) {
     const tDerive = msSince(t1);
 
     const t2 = now();
+    // the real cards that are replaced by drawn ones (REFS moved: what the state says about them goes to the drawn card, src/references.mjs)
+    const replaced = [];
+    const forget = (card, fresh) => { replaced.push({ uid: card.uid, id: card.id, name: card.name, fresh }); for (const child of card.mounted ?? []) forget(child, fresh); };
     for (const { player, seat, pool, slots } of plan) {
       for (let i = pool.length - 1; i > 0; i -= 1) { const j = Math.floor(rand() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
       const holder = copy.players[player];
@@ -174,18 +189,35 @@ export async function loadSim(gameDir) {
         return () => { let at = Math.floor(rand() * listTotal); for (const [id, copies] of list) { if (at < copies) return id; at -= copies; } return list[0][0]; };
       })();
       slots.forEach((slot, n) => {
+        const real = holder[slot.zone][slot.index];
         const fresh = simCard(pool[n] ?? drawFromList(), player, seat);
-        if (slot.zone === 'deck') holder.deck[slot.index] = fresh;
-        else if (slot.zone === 'hand') holder.hand[slot.index] = G.prepare.hydrateCard(fresh);
-        else if (slot.zone === 'registry' || slot.zone === 'trash' || slot.zone === 'ban') holder[slot.zone][slot.index] = { ...G.prepare.hydrateCard(fresh), faceDown: true };
+        let placed;
+        if (slot.zone === 'deck') placed = fresh;
+        else if (slot.zone === 'hand') placed = G.prepare.hydrateCard(fresh);
+        else if (slot.zone === 'registry' || slot.zone === 'trash' || slot.zone === 'ban') placed = { ...G.prepare.hydrateCard(fresh), faceDown: true };
         else {
-          const old = holder[slot.zone][slot.index];
-          holder[slot.zone][slot.index] = { ...G.prepare.hydrateCard(fresh), faceDown: true, sleep: old.sleep, summoningSick: old.summoningSick,
-            residentActive: old.residentActive, layerRole: old.layerRole, slot: old.slot, placementOrder: old.placementOrder };
+          placed = { ...G.prepare.hydrateCard(fresh), faceDown: true, sleep: real.sleep, summoningSick: real.summoningSick,
+            residentActive: real.residentActive, layerRole: real.layerRole, slot: real.slot, placementOrder: real.placementOrder };
         }
+        holder[slot.zone][slot.index] = placed;
+        forget(real, placed);
       });
     }
-    if (copy.runtimeContext) copy.runtimeContext.rngState = G.rng.createRngState({ seed: Math.floor(rand() * 0x100000000) >>> 0 }).value;
+    if (copy.runtimeContext) {
+      copy.runtimeContext.rngState = G.rng.createRngState({ seed: Math.floor(rand() * 0x100000000) >>> 0 }).value;
+      if (refs === 'moved') {
+        // the engine's table of uid -> card id has a row for every card of both decks: the rows of the replaced cards go (a drawn card never had one)
+        const gone = new Set(replaced.map((entry) => entry.uid));
+        copy.runtimeContext.uidAliases = copy.runtimeContext.uidAliases.filter((row) => !gone.has(row.uid));
+      }
+    }
+    if (refs === 'moved') {
+      // the rest of what the state says about a replaced card is about the drawn card now
+      remapReferences(copy, replaced);
+      // and the state names each side's start deck: the other side's is its whole list, so it is set to the game's default id, which says nothing
+      const otherSide = viewerPlayer === 'player' ? 'ai' : 'player';
+      copy[`${otherSide}DeckId`] = otherSide === 'player' ? 'red' : 'yellow';
+    }
     const tFill = msSince(t2);
     return { state: copy, ms: { clone: tClone, derive: tDerive, fill: tFill, total: msSince(t0) }, plan };
   }

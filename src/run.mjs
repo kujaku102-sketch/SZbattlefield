@@ -19,6 +19,9 @@
 //   --shadow <cpu>  with --record: a teacher CPU (one that looks ahead) looks at every decision of the other CPUs and its answer is recorded, the CPU's own played (DAgger)
 //   --llm-config <file>  with --shadow llm: the settings of the language model teacher (model, transport direct|replay|dry, limits on the spend; no key: that is read from the environment)
 //   --shadow-compare <cpu>  with --shadow llm: a looking-ahead CPU answers the same decisions too, to be read next to the model's
+//   --sim-refs moved|keep  what the states a CPU that looks ahead tries moves on say about the real hidden cards they replaced (src/sim.mjs): moved (default) = nothing of them; keep = as the tables before were made
+//   --compare-sim-refs  with --shadow and --record: ask the teacher each decision again on the other kind of re-drawn state (--sim-refs), and write both answers into the result (refsCompare); nothing else changes
+//   --plain-match-id  name each match by its decks, its seed and which side plays simple, not by the CPUs' file names (for compare-shipped: the same CPU from two files plays the same matches)
 //   --sim-prior real|seen  where a CPU that looks ahead (needsSim: lookahead, deep, beatZIG's reader) draws the other side's hidden cards from (src/sim.mjs): real (default) = the other side's
 //                   decklist minus what the seat has seen; seen = only what the seat could know (the library, the colours it has seen, the rules of deck building). Part of the environment.
 //   --max-loop N    ... or when the same board with the same kind of window comes back N times in one turn, whoever acts (a loop between the two seats; default 30; cap "loop")
@@ -64,9 +67,13 @@ const cpuB = args.b ?? 'simple';
 const shard = args.shard ? parseShard(args.shard) : null;
 const outDir = path.resolve(args.out ?? path.join('cpu-bench-out', `${cpuA.replace(/[^\w.-]+/g, '_')}-${cpuB.replace(/[^\w.-]+/g, '_')}`, ...(shard ? [`shard-${shard.index}-of-${shard.count}`] : [])));
 const workers = Number(args.workers ?? Math.max(1, os.cpus().length - 1));
-const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(typeof args.shadow === 'string' ? { shadow: args.shadow } : {}), ...(typeof args['llm-config'] === 'string' ? { llmConfig: path.resolve(args['llm-config']) } : {}), ...(typeof args['shadow-compare'] === 'string' ? { compare: args['shadow-compare'] } : {}), ...(args['watch-noop'] ? { watchNoop: true } : {}), ...(args.trace ? { trace: true } : {}), ...(args.style ? { style: true } : {}), ...(args['sim-prior'] === 'seen' ? { simPrior: 'seen' } : {}) };
+const limits = { maxCommands: Number(args['max-commands'] ?? 3000), maxWallMs: Number(args['max-wall-sec'] ?? 900) * 1000, idle: 8, maxRepeat: Number(args['max-repeat'] ?? 10), maxLoop: Number(args['max-loop'] ?? 30), ...(typeof args.shadow === 'string' ? { shadow: args.shadow } : {}), ...(typeof args['llm-config'] === 'string' ? { llmConfig: path.resolve(args['llm-config']) } : {}), ...(typeof args['shadow-compare'] === 'string' ? { compare: args['shadow-compare'] } : {}), ...(args['watch-noop'] ? { watchNoop: true } : {}), ...(args.trace ? { trace: true } : {}), ...(args.style ? { style: true } : {}), ...(args['sim-prior'] === 'seen' ? { simPrior: 'seen' } : {}), ...(args['plain-match-id'] ? { plainMatchId: true } : {}), ...(args['sim-refs'] === 'keep' ? { simRefs: 'keep' } : {}), ...(args['compare-sim-refs'] ? { refsCompare: true } : {}) };
 if (args['sim-prior'] !== undefined && !['real', 'seen'].includes(args['sim-prior'])) { console.error('--sim-prior real|seen'); process.exit(2); }
-process.env.SZB_SIM_PRIOR = args['sim-prior'] === 'seen' ? 'seen' : 'real';       // the workers read it (src/sim.mjs)
+process.env.SZB_SIM_PRIOR = args['sim-prior'] === 'seen' ? 'seen' : 'real';
+// The old copy of a state (keep) is for reading the tables made before and for the comparison of --compare-sim-refs, by a person at a terminal: it is not offered to the workflows or the notebook,
+// which do not set the variable. A table of the bench is of moved.
+if ((args['sim-refs'] === 'keep' || args['compare-sim-refs']) && process.env.SZB_ALLOW_SIM_REFS_KEEP !== '1') { console.error('--sim-refs keep and --compare-sim-refs are for a person at a terminal: set SZB_ALLOW_SIM_REFS_KEEP=1'); process.exit(2); }
+process.env.SZB_SIM_REFS = args['sim-refs'] === 'keep' ? 'keep' : 'moved';       // the workers read it (src/sim.mjs)
 // Seeds. --seed-count N = seeds 1..N; --seeds a,b,c = exactly those (a single one: --seeds 301,). A bare number in --seeds still means 1..N (as before) but says so:
 // it has been mistaken for "the seed N" three times, each time for a run of hundreds of matches too many.
 const upTo = (n) => Array.from({ length: n }, (_, index) => index + 1);
