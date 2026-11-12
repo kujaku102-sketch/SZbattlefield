@@ -1,0 +1,4 @@
+{ "kind": "llm-classify", "set": "classify-1", "provider": "anthropic",
+  "model": "claude-sonnet-5-5", "effort": "medium", "maxTokens": 32000, "batchSize": 20,
+  "budget": { "maxUsd": 5, "stopAboveUsd": 3 },
+  "pricing": { "label": "Anthropic Claude Sonnet 5.5 (checked 2026-11-12, platform.claude.com pricing and prompt-caching)", "input": 2, "output": 10, "cacheRead": 0.1, "cacheWrite": 2.5 } }
