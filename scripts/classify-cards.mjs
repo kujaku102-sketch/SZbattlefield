@@ -38,6 +38,7 @@ const gameDir = path.resolve(option('game') ?? process.env.GAME_DIR ?? die('--ga
 const config = JSON.parse(readFileSync(configFile, 'utf8'));
 const s = { model: 'claude-sonnet-5-5', effort: 'medium', maxTokens: 32000, batchSize: 20, endpoint: 'https://api.anthropic.com/v1/messages', version: '2023-06-01', retries: 4,
   pricing: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, budget: { maxUsd: 5, stopAboveUsd: 3 }, set: 'classify-1', ...config };
+if (option('max-tokens')) s.maxTokens = Number(option('max-tokens'));      // the review writes a long answer, and the thinking comes out of the same limit
 if (s.provider && s.provider !== 'anthropic') die('provider: anthropic only');
 keyEnvOf('anthropic', s.keyEnv);
 mkdirSync(path.join(outDir, 'responses'), { recursive: true });
@@ -101,7 +102,8 @@ const classifySchema = (taxonomy, ids) => {
   const rating = { type: 'integer', enum: [1, 2, 3, 4, 5] };
   return { type: 'object', additionalProperties: false, required: ['cards'], properties: { cards: { type: 'array', items: { type: 'object', additionalProperties: false,
     required: ['id', 'effectKinds', 'roles', 'axisTags', 'timings', 'conditionAndCost', 'power', 'personaFit', 'confidence', 'reason', 'ambiguity'], properties: {
-      id: { type: 'string', enum: ids },
+      // a plain string: the schema is part of what the API keeps between calls, so an enum of this batch's ids would make every batch a different prefix (no cache hit); the ids are checked after the answer
+      id: { type: 'string' },
       effectKinds: { type: 'array', items: enumOf(taxonomy.effectKinds) },
       roles: { type: 'array', items: enumOf(taxonomy.roles) },
       axisTags: { type: 'array', items: enumOf(taxonomy.axisTags) },
