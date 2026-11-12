@@ -10,6 +10,9 @@
 //   cards     { "<card id>": [came, executed, left, activated] } for the seat's OWN cards: came = copies that were in its hand or registry at some point of the match (its opening hand,
 //             its draws, what it installed), executed = executions of the card (executeCard, executeSpell, setScript, executeLayered, executeRegistry, mountCard), left = copies that came and
 //             were never executed, activated = activations of the card's effect or script once it is on the board (activateCardEffect, activateScript). summary().names maps card id -> name.
+//             After these four, how it came onto the board without an execution (read from the game's card_placed events, the cause and the source named in them): placedSelf = by its own
+//             effect or by the rule (the source is the card itself: STD-179 dragging itself in when a Script is activated, STD-048 dragged in by the first draw of a turn: the two are not told apart),
+//             placedOther = by another card's effect. A token the game makes is not counted. Rows written before this (four numbers) have none of it.
 // The engine state is read here, in the harness; a CPU never sees it.
 const HOLDERS = ['player', 'ai'];
 const uidsOf = (player, zones) => new Set(zones.flatMap((zone) => (player[zone] ?? []).map((card) => card.uid)));
@@ -17,10 +20,12 @@ const EXECUTIONS = new Set(['executeCard', 'executeSpell', 'setScript', 'execute
 const ACTIVATIONS = new Set(['activateCardEffect', 'activateScript']);
 const PLUGINS = new Set(['Plugin', 'P-in']);      // a Plugin works only in the registry (rulebook 4.6): installing it is how it is used, so its installation counts as its execution
 const instanceOf = (card) => card.identity?.instanceId ?? card.uid;      // the match record names a card "card:<instance id>"
+const PLACED_BY_EXECUTION = new Set([null, undefined, 'set', 'execution']);      // card_placed causes that are the execution (or the set) of the card itself, counted from the command
 
 export function createStyle() {
   const seats = [0, 1].map(() => ({ attacks: { user: 0, card: 0 }, trades: 0, kills: 0, lost: 0, ends: 0, hand: 0, registry: 0, front: 0, back: 0, memoryLeft: 0, moves: {} }));
   let pending = null;
+  let lastEvent = 0;      // the number of the newest game event read (EV-n); the game keeps its newest 200
   const seen = [new Map(), new Map()];       // by seat: uid -> { id, name, executed }
   const names = {};
   // events read from the game's log (the log keeps its newest 120 lines, so it is read after every command): how many times Humanoid's Recovery Boot (STR back to 1) fired
@@ -35,6 +40,25 @@ export function createStyle() {
     for (const seat of [0, 1]) for (const zone of ['hand', 'registry']) for (const card of state.players[HOLDERS[seat]][zone] ?? []) {
       if (!seen[seat].has(instanceOf(card))) seen[seat].set(instanceOf(card), { id: card.id, executed: 0 });
       names[card.id] ??= card.name;
+    }
+  };
+  // cards that came onto the board by an effect (not by their execution): from the game's own card_placed events
+  const readPlacements = (state) => {
+    const arrived = new Set();
+    for (const event of state.events ?? []) {
+      const n = Number(/^EV-([0-9]+)$/.exec(String(event.id))?.[1] ?? 0);
+      if (n <= lastEvent) continue;
+      lastEvent = n;
+      if (event.type !== 'card_placed' || PLACED_BY_EXECUTION.has(event.placementCause) || arrived.has(event.cardUid)) continue;
+      const seat = HOLDERS.indexOf(event.playerId); if (seat < 0) continue;
+      arrived.add(event.cardUid);
+      const owner = state.players[event.playerId];
+      const card = ['front', 'back', 'hand', 'registry', 'trash'].flatMap((zone) => owner[zone] ?? []).find((c) => c.uid === event.cardUid);
+      if (card?.token) continue;
+      const key = card ? instanceOf(card) : event.cardUid;
+      const entry = seen[seat].get(key) ?? { id: event.cardId, executed: 0 };      // a card that came from the deck or the trash by the effect itself came by that
+      if (event.source === event.cardName) entry.placedSelf = (entry.placedSelf ?? 0) + 1; else entry.placedOther = (entry.placedOther ?? 0) + 1;
+      seen[seat].set(key, entry); names[event.cardId] ??= event.cardName;
     }
   };
   return {
@@ -60,7 +84,7 @@ export function createStyle() {
       }
       const source = ACTIVATIONS.has(pending.type) && typeof recorded?.cardRef === 'string' && recorded.cardRef.startsWith('card:') ? seen[pending.seat].get(recorded.cardRef.slice(5)) : null;
       if (source) source.activated = (source.activated ?? 0) + 1;      // a card that never came through the hand or the registry (placed by an effect) is not counted here
-      observe(state); readLog(state);
+      observe(state); readLog(state); readPlacements(state);
       if (pending.type === 'attack') {
         if (pending.target === 'user') s.attacks.user += 1; else s.attacks.card += 1;
         const nowMine = uidsOf(me, ['front', 'back']); const nowTheirs = uidsOf(other, ['front', 'back']);
@@ -75,7 +99,7 @@ export function createStyle() {
     summary() {
       const cardsOf = (seat) => {
         const out = {};
-        for (const entry of seen[seat].values()) { const c = (out[entry.id] ??= [0, 0, 0, 0]); c[0] += 1; c[1] += entry.executed; if (entry.executed === 0) c[2] += 1; c[3] += entry.activated ?? 0; }
+        for (const entry of seen[seat].values()) { const c = (out[entry.id] ??= [0, 0, 0, 0, 0, 0]); c[0] += 1; c[1] += entry.executed; if (entry.executed === 0) c[2] += 1; c[3] += entry.activated ?? 0; c[4] += entry.placedSelf ?? 0; c[5] += entry.placedOther ?? 0; }
         return out;
       };
       return { 'seat-a': { ...seats[0], cards: cardsOf(0) }, 'seat-b': { ...seats[1], cards: cardsOf(1) }, names, events };
