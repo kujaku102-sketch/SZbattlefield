@@ -22,7 +22,8 @@ import { PROMPT_VERSION } from '../src/teachers/prompt.mjs';
 import { openLedger, priceOf } from '../src/teachers/ledger.mjs';
 import { keyEnvOf, readApiKey, redact } from '../src/teachers/secrets.mjs';
 
-export const CLASSIFY_VERSION = 1;
+// 2: the lists carry `timings` (chosen from a list of the taxonomy) and a rating scale; the fields power / personaFit replace strength / fit; the card type, colour, memory, keywords and classes are read from the game's card data, not asked
+export const CLASSIFY_VERSION = 2;
 const args = process.argv.slice(2);
 const option = (name) => { const at = args.indexOf(`--${name}`); return at < 0 || args[at + 1] === undefined || args[at + 1].startsWith('--') ? null : args[at + 1]; };
 const flag = (name) => args.includes(`--${name}`);
@@ -47,6 +48,13 @@ const writeOut = (name, data) => writeFileSync(path.join(outDir, name), typeof d
 // ---- what is sorted
 const { BUILDABLE_CARDS } = await import(pathToFileURL(path.join(gameDir, 'src/game/deck-builder.js')).href);
 const context = await buildContext({ gameDir });
+// what is read from the game's own card data and never asked of the model: type, colour, memory, keywords (as the game's text compiler finds them), classes
+const gameImport = (file) => import(pathToFileURL(path.join(gameDir, file)).href);
+const { compiledForKeywords } = await gameImport('src/game/core/prepare.js');
+const { hasKeyword, keywordValue } = await gameImport('src/game/core/keywords.js');
+const KEYWORDS = [...new Set(BUILDABLE_CARDS.flatMap((c) => compiledForKeywords(c).keywords.map((k) => k.name)))].sort();
+const derivedOf = (c) => ({ cardType: c.category, color: c.color ?? null, memoryCost: c.cost, atk: c.atk ?? null, str: c.str ?? null,
+  keywords: KEYWORDS.filter((k) => hasKeyword(c, k)).map((k) => ({ name: k, value: keywordValue(c, k) })), classes: c.classes ?? [] });
 let gameCommit = null; try { gameCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: gameDir, encoding: 'utf8' }).trim(); } catch { /* not a git checkout */ }
 const meta = () => ({ model: s.model, effort: s.effort, classifyVersion: CLASSIFY_VERSION, promptVersion: PROMPT_VERSION, contextSha256: context.sha256, contextChars: context.chars, poolCards: BUILDABLE_CARDS.length, gameCommit, at: new Date().toISOString() });
 
@@ -59,7 +67,6 @@ const SYSTEM = [
   '特定のデッキや相手のデッキは与えられません。カードの強さは、デッキに入れて使う前提で、単体と性格との合い方の両方から、その場の本文だけで考えてください。'
 ].join('\n');
 
-const TIMINGS = ['自分の手番', '相手の手番', '攻撃宣言時', '攻撃を受けた時', 'ターン開始時', 'ターン終了時', '登場時(ログイン)', '退場時(ログアウト)', '常時(場にある間)', '手札から', '応答(条件・if)', 'その他'];
 const TAXONOMY_USER = [
   '公開カードプール全体を見て、これから全カードを分類するための3つの一覧を作ってください。それぞれに定義をつけます。',
   '1. 効果の種類（effectKinds）：効果が何をするかの仕組みによる分け方（例：破壊する・引く・探す・メモリを増やす・置く・強める・手札や場に戻す、など。本文に実際にあるものから作る）。15〜30個。',
@@ -79,22 +86,26 @@ const TAXONOMY_SCHEMA = { type: 'object', additionalProperties: false, required:
 const taxonomyText = (taxonomy) => ['# 分類の一覧（人が確かめた、この通りに分類する）',
   '## 効果の種類', ...taxonomy.effectKinds.map((k) => `- ${k.id}（${k.name}）：${k.definition}`),
   '## 役割', ...taxonomy.roles.map((k) => `- ${k.id}（${k.name}）：${k.definition}`),
-  '## 軸のタグ', ...taxonomy.axisTags.map((k) => `- ${k.id}（${k.name}）：${k.definition}`),
-  '## 使う時（timing）', ...TIMINGS.map((t) => `- ${t}`)].join('\n');
+  '## 軸のタグ（クラス・名前・テーマのまとまり。当てはまるものだけ）', ...taxonomy.axisTags.map((k) => `- ${k.id}（${k.name}）：${k.definition}`),
+  '## 使う時（timings）', ...taxonomy.timings.map((k) => `- ${k.id}（${k.name}）：${k.definition}`),
+  '## 評価の目盛り（power と personaFit は、この基準で 1〜5 を付ける）',
+  ...Object.entries(taxonomy.ratingScale.power).map(([n, t]) => `- power ${n}：${t}`),
+  ...Object.entries(taxonomy.ratingScale.personaFit).filter(([k]) => k !== 'scale').map(([k, t]) => `- personaFit.${k}：${t}`), `- personaFit の目盛り：${taxonomy.ratingScale.personaFit.scale}`, `- 見立ての前提：${taxonomy.ratingScale.basis}`,
+  '## 分類させないもの', `${taxonomy.derivedFromData.note}（${taxonomy.derivedFromData.fields.join('、')}）。これらは書かないでください。`].join('\n');
 
 const classifySchema = (taxonomy, ids) => {
   const enumOf = (list) => ({ type: 'string', enum: list.map((k) => k.id) });
   const rating = { type: 'integer', enum: [1, 2, 3, 4, 5] };
   return { type: 'object', additionalProperties: false, required: ['cards'], properties: { cards: { type: 'array', items: { type: 'object', additionalProperties: false,
-    required: ['id', 'effectKinds', 'roles', 'axisTags', 'timing', 'conditionAndCost', 'strength', 'fit', 'confidence', 'reason', 'ambiguity'], properties: {
+    required: ['id', 'effectKinds', 'roles', 'axisTags', 'timings', 'conditionAndCost', 'power', 'personaFit', 'confidence', 'reason', 'ambiguity'], properties: {
       id: { type: 'string', enum: ids },
       effectKinds: { type: 'array', items: enumOf(taxonomy.effectKinds) },
       roles: { type: 'array', items: enumOf(taxonomy.roles) },
       axisTags: { type: 'array', items: enumOf(taxonomy.axisTags) },
-      timing: { type: 'array', items: { type: 'string', enum: TIMINGS } },
+      timings: { type: 'array', items: enumOf(taxonomy.timings) },
       conditionAndCost: { type: 'string' },
-      strength: rating,
-      fit: { type: 'object', additionalProperties: false, required: ['beatdown', 'midrange', 'control', 'tactic'], properties: { beatdown: rating, midrange: rating, control: rating, tactic: rating } },
+      power: rating,
+      personaFit: { type: 'object', additionalProperties: false, required: ['beatdown', 'midrange', 'control', 'tactic'], properties: { beatdown: rating, midrange: rating, control: rating, tactic: rating } },
       confidence: { type: 'string', enum: ['高', '中', '低'] },
       reason: { type: 'string' },
       ambiguity: { type: 'object', additionalProperties: false, required: ['ambiguous', 'note'], properties: { ambiguous: { type: 'boolean' }, note: { type: 'string' } } } } } } } };
@@ -105,19 +116,21 @@ const classifyUser = (cards) => [
   '- effectKinds：効果の種類（複数可。一覧の id）。効果のないカードは空でよい。',
   '- roles：役割を1〜3個、主なものを先に。一覧の id。',
   '- axisTags：軸のタグ（一覧の id、なければ空）。',
-  '- timing：使う時（一覧の中から複数可）。',
+  '- timings：使う時（一覧の timings の id、複数可）。',
   '- conditionAndCost：発動の条件とコストの要点（短く）。',
-  '- strength：単体の強さ 1〜5（3が普通。コストに見合うかで見る）。',
-  '- fit：性格ごとの合い方 1〜5（beatdown＝攻めて押し切る、midrange＝場の力と相打ちの得、control＝手札とレジストリで勝つ・相手の場を減らす・自分のSTRを守る、tactic＝成立の難しい特定の組み合わせ）。',
+  '- power：単体の強さ 1〜5（一覧の「評価の目盛り」の基準で）。',
+  '- personaFit：性格ごとの合い方 1〜5（beatdown・midrange・control・tactic。「評価の目盛り」の基準で。その性格のデッキにどれだけ合うか）。',
   '- confidence：この分類と評価の確からしさ（高・中・低）。',
   '- reason：理由を2文まで。カードの本文とルールのどこから言えるかを示す。',
-  '- ambiguity：本文やルールで読み方が分かれるなら ambiguous を true にして、どこが分かれるかを note に書く。分かれないなら false と空文字。',
-  '評価は初期評価です。使った結果で見直します。'].join('\n');
+  '- ambiguity：本文やルールで読み方が分かれるなら ambiguous を true にして、どこが分かれるかを note に書く。分かれないなら false と空文字。表記のゆれ（ライフ・Sc など）や、Script 扱いで置ける Ob の扱いのように、裁定になる所も、勝手に決めずにここに書く。',
+  'カードの種別・色・メモリ・キーワード・クラスは書きません（データから付けます）。評価は初期評価です。使った結果で見直します。'].join('\n');
 
 const REVIEW_USER = (rows) => ['次は、全カードの分類と初期評価の結果です。同じ種類のカードの間で、評価・役割・軸のタグが食い違っていないかを見てください。',
   '食い違いは inconsistencies に、どのカード（cardIds）の、何が食い違っているか（problem）と、直す案（proposals：cardId・field・from・to・why）を書きます。直す案は出すだけで、上書きはしません。',
   '分け方（一覧）に足りない所・重なっている所があれば taxonomyNotes に。全体の様子は summary に（役割ごとの枚数の偏り、評価の偏りなど）。', '', JSON.stringify(rows)].join('\n');
-const REVIEW_SCHEMA = { type: 'object', additionalProperties: false, required: ['inconsistencies', 'taxonomyNotes', 'summary'], properties: {
+const REVIEW_USER_2 = (rows, first) => ['次は、全カードの分類と初期評価の結果と、1回目の見直しで出た指摘です。1回目の指摘を1つずつ確かめてください。成り立つものは残し（理由を直して）、成り立たないものは外し、1回目が見落としたものがあれば足してください。',
+  '形は1回目と同じです（inconsistencies・taxonomyNotes・summary）。直す案は出すだけで、上書きはしません。', '', '## 1回目の指摘', JSON.stringify(first), '', '## 全カードの結果', JSON.stringify(rows)].join('\n');
+const REVIEW_SCHEMA ={ type: 'object', additionalProperties: false, required: ['inconsistencies', 'taxonomyNotes', 'summary'], properties: {
   inconsistencies: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['cardIds', 'problem', 'proposals'], properties: {
     cardIds: { type: 'array', items: { type: 'string' } }, problem: { type: 'string' },
     proposals: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['cardId', 'field', 'from', 'to', 'why'], properties: { cardId: { type: 'string' }, field: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, why: { type: 'string' } } } } } } },
@@ -191,8 +204,8 @@ const usageLine = (answer) => `${answer.cached ? '(from the kept answer)' : `$${
 // ---- estimates (before a run)
 function estimate() {
   const p = price(); const ctxTokens = approxTokens(context.chars);
-  const taxonomyFile = path.join(outDir, 'taxonomy.json');
-  const taxonomyTokens = existsSync(taxonomyFile) ? approxTokens(taxonomyText(readJson(taxonomyFile)).length) : 4000;
+  const taxonomyFile = path.join(outDir, 'taxonomy.approved.json');
+  const taxonomyTokens = existsSync(taxonomyFile) ? approxTokens(taxonomyText(readJson(taxonomyFile).taxonomy).length) : 4000;
   const perOut = (n) => (n * p.output) / 1e6;
   const stage1 = (ctxTokens * p.cacheWrite) / 1e6 + perOut(16000);
   const batches = Math.ceil(BUILDABLE_CARDS.length / s.batchSize);
@@ -234,7 +247,7 @@ if (stage === 'taxonomy') {
       if (!ids.includes(row.id)) bad.push('id not in the batch');
       if (row.roles.length < 1 || row.roles.length > 3) bad.push(`roles ${row.roles.length}`);
       if (bad.length) { problems.push({ id: row.id, bad }); continue; }
-      done.cards[row.id] = { ...row, name: lookup(row.id) };
+      done.cards[row.id] = { ...row, name: lookup(row.id), derived: derivedOf(BUILDABLE_CARDS.find((c) => c.id === row.id)) };
     }
     for (const id of ids) if (!data.cards.some((r) => r.id === id)) problems.push({ id, bad: ['missing in the answer'] });
     spent += answer.usd ?? 0;
@@ -242,15 +255,25 @@ if (stage === 'taxonomy') {
     done.meta = meta(); writeOut('classification.json', done);
   }
   if (problems.length) { writeOut('classification-problems.json', problems); console.log(`problems: ${problems.length} (classification-problems.json; run again with --only to ask for them)`); }
+  // the places where the text or the rules read two ways: rulings on the cards, for a person (never decided here)
+  writeOut('ambiguities.json', Object.values(done.cards).filter((c) => c.ambiguity.ambiguous).map((c) => ({ id: c.id, name: c.name, note: c.ambiguity.note })));
   console.log(`classified ${Object.keys(done.cards).length} of ${BUILDABLE_CARDS.length}; this run $${spent.toFixed(4)}`);
 } else if (stage === 'review') {
   const taxonomy = readJson(path.join(outDir, 'taxonomy.approved.json')); const classification = readJson(path.join(outDir, 'classification.json'));
-  const rows = Object.values(classification.cards).map((c) => ({ id: c.id, name: c.name, effectKinds: c.effectKinds, roles: c.roles, axisTags: c.axisTags, strength: c.strength, fit: c.fit, confidence: c.confidence, ambiguous: c.ambiguity.ambiguous }));
-  const answer = await ask({ id: 'review', extraSystem: taxonomyText(taxonomy.taxonomy ?? taxonomy), user: REVIEW_USER(rows), schema: REVIEW_SCHEMA });
-  if (answer.dry) { console.log('dry: no call'); process.exit(0); }
-  const review = parse(answer, 'review');
-  writeOut('review.json', { meta: meta(), review });
-  console.log(`review: ${review.inconsistencies.length} inconsistencies; ${usageLine(answer)}`);
+  const rows = Object.values(classification.cards).map((c) => ({ id: c.id, name: c.name, type: c.derived?.cardType, color: c.derived?.color, memory: c.derived?.memoryCost, effectKinds: c.effectKinds, roles: c.roles, axisTags: c.axisTags, timings: c.timings,
+    power: c.power, personaFit: c.personaFit, confidence: c.confidence, ambiguous: c.ambiguity.ambiguous }));
+  // two looks: the first reads the results; the second is shown the first's findings and checks each (keeps what holds, drops what does not, adds what it missed). Neither overwrites anything.
+  let first = null;
+  for (const round of [1, 2]) {
+    if (option('round') && Number(option('round')) !== round) { if (round === 1 && existsSync(path.join(outDir, 'review-1.json'))) first = readJson(path.join(outDir, 'review-1.json')).review; continue; }
+    const user = round === 1 ? REVIEW_USER(rows) : REVIEW_USER_2(rows, first);
+    const answer = await ask({ id: `review-${round}`, extraSystem: taxonomyText(taxonomy.taxonomy ?? taxonomy), user, schema: REVIEW_SCHEMA });
+    if (answer.dry) { console.log('dry: no call'); process.exit(0); }
+    const review = parse(answer, `review-${round}`);
+    writeOut(`review-${round}.json`, { meta: meta(), round, review });
+    if (round === 1) first = review; else writeOut('review.json', { meta: meta(), review, firstRound: first });
+    console.log(`review ${round}: ${review.inconsistencies.length} inconsistencies; ${usageLine(answer)}`);
+  }
 }
 console.log(`spent in all so far: $${ledger.usd.toFixed(4)} (limit $${s.budget.maxUsd})`);
 
