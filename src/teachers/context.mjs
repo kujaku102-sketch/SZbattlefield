@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const CONTEXT_VERSION = 1;
+export const CONTEXT_VERSION = 2;      // 2: a block of the notation (what a card text writes and what the rules call it) between the rules and the pool
 
 const lf = (text) => text.replace(/\r\n/g, '\n');
 const cardLine = (card) => {
@@ -23,6 +23,13 @@ const cardLine = (card) => {
   const classes = (card.classes ?? []).length ? ` クラス:${card.classes.join('/')}` : '';
   return `${card.id} 「${card.name}」〈${card.category}${card.color ? `・${card.color}` : ''}〉コスト${card.cost}${stats}${classes} ${card.text ?? '(効果なし)'}`;
 };
+
+// the keywords of the card data (the game's text compiler): name, how a card text writes it, the term to look for in the rulebook
+const NOTATION = [['LOGIN', '［ログイン］', 'ログイン'], ['LOGOUT', '［ログアウト］', 'ログアウト'], ['SECURITY', '［セキュリティ］', 'セキュリティ'], ['RESIDENT', '［レジデント］', 'レジデント'], ['QA', '［QA］', 'QA'],
+  ['LAYERED', '［レイヤード:…］', 'レイヤード'], ['OVERRIDE', '［オーバーライド］', 'オーバーライド'], ['UPDATE', '［アップデート:N］', 'アップデート'], ['IF', '［if:…］ または ［条件:…］', '[if:'], ['RESPONSE', '［レスポンス］', 'レスポンス'],
+  ['HACKING', '［ハッキング］', 'ハッキング'], ['CONTACT', '［コンタクト］', 'コンタクト'], ['MAGAZINE', '［弾倉:X］', '弾倉'], ['ENCRYPTION', '［暗号化］', '暗号化'], ['PROXY', '［プロキシ:N］', 'プロキシ'],
+  ['BACKUP', '［バックアップ］', 'バックアップ'], ['DISCONNECT', '［切断］', '切断'], ['PROTECT', '［プロテクト］', 'プロテクト'], ['DECOY', '［デコイ］', 'デコイ'], ['FIREWALL', '［ファイアウォール］', 'ファイアウォール'],
+  ['OC', '［OC+N］', 'OC']];
 
 const cache = new Map();
 
@@ -38,10 +45,25 @@ export async function buildContext({ gameDir, ownDeck = null }) {
     const rules = ['# ルール（公開のルールブック）', rulebook, '', '# ゲームがルールをどう扱うかのメモ（src/game/RULES.md。意図したルールで、実装が同じと保証するものではない）', notes].join('\n');
     const pool = ['# 公開カードプール（デッキを組めるカード全部の本文。あなたのデッキに入っているカードも入っていないカードも、同じ形で並んでいる。相手が何を入れているかはここからは分からない）',
       ...BUILDABLE_CARDS.map(cardLine)].join('\n');
-    shared = { rules, pool };
+    // What the card texts write and what the rules call it: the facts that the card data and the text compiler give (the card's `keywords` as the game's own compiler finds them), set beside what the rulebook says.
+    const { compiledForKeywords } = await import(pathToFileURL(path.join(rootKey, 'src/game/core/prepare.js')).href);
+    const inData = new Set(BUILDABLE_CARDS.flatMap((c) => compiledForKeywords(c).keywords.map((k) => k.name)));
+    const known = NOTATION.filter(([name]) => inData.has(name));
+    // 「切断」: RULES.md uses the word for a player's connection being cut, not for the card keyword: only the rulebook counts for it
+    const mentioned = (term) => rulebook.includes(term) || (term !== '切断' && notes.includes(term));
+    const notation = ['# 表記の対応（カードの本文の書き方と、ルールの用語。カードのデータから言える事実）',
+      'カードの本文の ［…］ の多くは、ゲームのデータではキーワード（keyword）です。データのキーワード名と、本文の書き方と、ルールブック・メモにその語があるか:',
+      ...known.map(([name, forms, term]) => `- ${name}：本文では ${forms}。ルールブック・メモに「${term}」${mentioned(term) ? 'の記述がある' : 'の記述はない'}。`),
+      '次の対応はデータから言えます。',
+      '- 本文の ［条件:X］（例: STD-001・STD-002）は、ルールの ［if:X］ と同じキーワード（データの keyword IF）を表す。ルールブック・メモは ［if:］ とだけ書いていて、［条件:］ は出てこない。',
+      '- 本文の ［OC+N］（例: STD-125・STD-128）は、ルールの OC（オーバークロック：実行時にカード指定の追加メモリを払うか選ぶ）のキーワード（データの keyword OC、値は N）を表す。N が追加メモリかどうかを、ルールブックは数字では書いていない。',
+      '- 本文の ［相手がObを実行する時］（STD-231）のように、キーワード名のない ［…］ は、データではキーワードではない（keyword なし）。そのカードの誘発の条件を示す括弧として読めるが、ルールブックにはこの書き方の説明がない。',
+      mentioned('切断') ? '' : '- ［切断］ は、データでは keyword DISCONNECT で、STD-049・STD-124・STD-176・STD-238 の本文にある。ルールブックにはこのキーワードの定義がない（RULES.md の「切断」は、対局者の接続が切れることで、別のもの）。',
+      'ここにない対応は、本文とルールの文面から読めるときだけ根拠にして、読めなければそう書くこと。'].filter(Boolean).join('\n');
+    shared = { rules, notation, pool };
     cache.set(rootKey, shared);
   }
-  const blocks = [{ id: 'rules', text: shared.rules, cache: false }, { id: 'pool', text: shared.pool, cache: true }];
+  const blocks = [{ id: 'rules', text: shared.rules, cache: false }, { id: 'notation', text: shared.notation, cache: false }, { id: 'pool', text: shared.pool, cache: true }];
   if (ownDeck) {
     const lines = Object.entries(ownDeck).sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true })).map(([id, n]) => `${id} ×${n}`);
     blocks.push({ id: 'deck', text: `# あなたのデッキ（あなたは自分のデッキの中身を知っている。並びは分からない）\n${lines.join('、')}`, cache: true });

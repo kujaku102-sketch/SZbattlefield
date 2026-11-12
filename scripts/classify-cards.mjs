@@ -23,7 +23,8 @@ import { openLedger, priceOf } from '../src/teachers/ledger.mjs';
 import { keyEnvOf, readApiKey, redact } from '../src/teachers/secrets.mjs';
 
 // 2: the lists carry `timings` (chosen from a list of the taxonomy) and a rating scale; the fields power / personaFit replace strength / fit; the card type, colour, memory, keywords and classes are read from the game's card data, not asked
-export const CLASSIFY_VERSION = 2;
+// 3: "reads two ways" only when three things hold at once (it changes what happens in a match, nothing in the rules or the text settles it, and it comes up in an ordinary match), each with a severity; the context has the notation block
+export const CLASSIFY_VERSION = 3;
 const args = process.argv.slice(2);
 const option = (name) => { const at = args.indexOf(`--${name}`); return at < 0 || args[at + 1] === undefined || args[at + 1].startsWith('--') ? null : args[at + 1]; };
 const flag = (name) => args.includes(`--${name}`);
@@ -63,7 +64,9 @@ const SYSTEM = [
   'あなたはカードゲーム「Siege÷Zeke」のカードを分類する分析者です。',
   '次に、公開のルールブックとゲームのルールのメモ、公開されているカード全部の本文が渡されます。ルールのメモは「意図したルール」で、実装が同じとは限りません。',
   '判断の根拠は、カードの本文とルールだけです。本文やルールから言えないことは言わず、確からしさを下げてください。',
-  '本文やルールで読み方が分かれる所は、勝手に決めずに「読みが分かれる」として、どこが分かれるかを書いてください。それはカードの裁定になるので、人が決めます。',
+  '「読みが分かれる」（ambiguity）を付けるのは、次の3つがすべてそろう時だけです。(1) 読み方によって、試合で起きることが変わる。(2) ルールブック・ルールのメモ・カードの本文・表記の対応のどれを読んでも決まらない。(3) その場面が、普通の試合で起こりうる。',
+  'ひとつでも欠けるなら付けません（言い回しが少し違うだけ、常識で読める、表記のゆれで意味は決まる、めったに起きない場面、は付けない）。付ける時は severity（高＝よく起きて結果が大きく変わる、中、低）を付けます。',
+  '読みが分かれる所は、勝手に決めずに、どう読めるか・何が変わるか・何が決めきれないかを書いてください。それはカードの裁定になるので、人が決めます。',
   '特定のデッキや相手のデッキは与えられません。カードの強さは、デッキに入れて使う前提で、単体と性格との合い方の両方から、その場の本文だけで考えてください。'
 ].join('\n');
 
@@ -108,7 +111,9 @@ const classifySchema = (taxonomy, ids) => {
       personaFit: { type: 'object', additionalProperties: false, required: ['beatdown', 'midrange', 'control', 'tactic'], properties: { beatdown: rating, midrange: rating, control: rating, tactic: rating } },
       confidence: { type: 'string', enum: ['高', '中', '低'] },
       reason: { type: 'string' },
-      ambiguity: { type: 'object', additionalProperties: false, required: ['ambiguous', 'note'], properties: { ambiguous: { type: 'boolean' }, note: { type: 'string' } } } } } } } };
+      ambiguity: { type: 'object', additionalProperties: false, required: ['ambiguous', 'severity', 'readings', 'whatChanges', 'whyUndecided', 'whenItComesUp'], properties: {
+        ambiguous: { type: 'boolean' }, severity: { type: 'string', enum: ['なし', '低', '中', '高'] },
+        readings: { type: 'string' }, whatChanges: { type: 'string' }, whyUndecided: { type: 'string' }, whenItComesUp: { type: 'string' } } } } } } } };
 };
 const classifyUser = (cards) => [
   '次のカードを1枚ずつ分類してください（本文は、渡された公開カードプールにあるものです）。', cards.map((c) => `- ${c.id} 「${c.name}」`).join('\n'), '',
@@ -122,7 +127,7 @@ const classifyUser = (cards) => [
   '- personaFit：性格ごとの合い方 1〜5（beatdown・midrange・control・tactic。「評価の目盛り」の基準で。その性格のデッキにどれだけ合うか）。',
   '- confidence：この分類と評価の確からしさ（高・中・低）。',
   '- reason：理由を2文まで。カードの本文とルールのどこから言えるかを示す。',
-  '- ambiguity：本文やルールで読み方が分かれるなら ambiguous を true にして、どこが分かれるかを note に書く。分かれないなら false と空文字。表記のゆれ（ライフ・Sc など）や、Script 扱いで置ける Ob の扱いのように、裁定になる所も、勝手に決めずにここに書く。',
+  '- ambiguity：システム文の3つの条件（試合で起きることが変わる・どの文面でも決まらない・普通の試合で起こる）がすべてそろう時だけ ambiguous を true にして、severity（低・中・高）、readings（どう読めるか。2つ以上）、whatChanges（読み方で試合の何が変わるか）、whyUndecided（どの文面を読んでも決まらない理由）、whenItComesUp（どんな場面で起きるか）を書く。そろわないなら ambiguous は false、severity は「なし」、ほかは空文字。',
   'カードの種別・色・メモリ・キーワード・クラスは書きません（データから付けます）。評価は初期評価です。使った結果で見直します。'].join('\n');
 
 const REVIEW_USER = (rows) => ['次は、全カードの分類と初期評価の結果です。同じ種類のカードの間で、評価・役割・軸のタグが食い違っていないかを見てください。',
@@ -256,7 +261,7 @@ if (stage === 'taxonomy') {
   }
   if (problems.length) { writeOut('classification-problems.json', problems); console.log(`problems: ${problems.length} (classification-problems.json; run again with --only to ask for them)`); }
   // the places where the text or the rules read two ways: rulings on the cards, for a person (never decided here)
-  writeOut('ambiguities.json', Object.values(done.cards).filter((c) => c.ambiguity.ambiguous).map((c) => ({ id: c.id, name: c.name, note: c.ambiguity.note })));
+  writeOut('ambiguities.json', Object.values(done.cards).filter((c) => c.ambiguity.ambiguous).map((c) => ({ id: c.id, name: c.name, severity: c.ambiguity.severity, readings: c.ambiguity.readings, whatChanges: c.ambiguity.whatChanges, whyUndecided: c.ambiguity.whyUndecided, whenItComesUp: c.ambiguity.whenItComesUp })));
   console.log(`classified ${Object.keys(done.cards).length} of ${BUILDABLE_CARDS.length}; this run $${spent.toFixed(4)}`);
 } else if (stage === 'review') {
   const taxonomy = readJson(path.join(outDir, 'taxonomy.approved.json')); const classification = readJson(path.join(outDir, 'classification.json'));
