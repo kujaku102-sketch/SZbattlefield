@@ -130,7 +130,7 @@ const systemBlocks = (extra) => [{ type: 'text', text: SYSTEM },
   ...(extra ? [{ type: 'text', text: extra, cache_control: { type: 'ephemeral' } }] : [])];
 const approxTokens = (chars) => Math.ceil(chars / 1.2);      // Japanese text: close to a token a character; a high guess
 
-const ledger = openLedger(path.join(outDir, 'ledger.jsonl'), { maxUsd: s.budget.maxUsd });
+const ledger = openLedger(path.join(outDir, 'ledger.jsonl'), { maxUsd: s.budget?.maxUsd ?? Infinity });      // no limit when the settings give none (the owner, 2026-11-12: cost is no problem for this work); every call is still written
 const host = new URL(s.endpoint).host;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -206,8 +206,8 @@ function estimate() {
 if (stage === 'estimate') { console.log(JSON.stringify(estimate(), null, 1)); process.exit(0); }
 const est = estimate(); const stageEst = { taxonomy: est.stage1Usd, classify: est.stage2Usd, review: est.stage3Usd }[stage];
 if (stageEst === undefined) die(`--stage ${stage}?`);
-console.log(`estimate for ${stage}: about $${stageEst.toFixed(2)} (the whole job about $${est.totalUsd.toFixed(2)}; spent so far $${ledger.usd.toFixed(4)}; limit $${s.budget.maxUsd})`);
-if (stageEst > s.budget.stopAboveUsd && !flag('yes')) die(`the estimate is over $${s.budget.stopAboveUsd}: not started without --yes (report it first)`);
+console.log(`estimate for ${stage}: about $${stageEst.toFixed(2)} (the whole job about $${est.totalUsd.toFixed(2)}; spent so far $${ledger.usd.toFixed(4)}; limit ${s.budget?.maxUsd ?? 'none'})`);
+if (s.budget?.stopAboveUsd != null && stageEst > s.budget.stopAboveUsd && !flag('yes')) die(`the estimate is over $${s.budget.stopAboveUsd}: not started without --yes (report it first)`);
 
 if (stage === 'taxonomy') {
   const answer = await ask({ id: 'taxonomy', user: TAXONOMY_USER, schema: TAXONOMY_SCHEMA });
