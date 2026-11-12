@@ -1,0 +1,349 @@
+{
+  "name": "controlZIG gen3",
+  "id": "controlZIG-gen3",
+  "line": "controlZIG",
+  "generation": 3,
+  "file": "cpus/release/gen3/controlZIG.mjs",
+  "what": "a small network scores the moves, learned from the answers of lookahead with the control persona (the control style: attacks the cards, trades, keeps memory low); no reader (fast and light)",
+  "module": {
+    "sha256": "175d5c8de233c6df54f182929afdce0d1bc19e8bb0f331ca77f82e8b6dcb0861"
+  },
+  "frozenCode": {
+    "note": "The CPU module imports only the copies in its own folder; cpus/learned/ and the others may change without changing how it plays. sha256 of each file with line endings read as LF; all = sha256 of the hashes in the order listed.",
+    "files": {
+      "candidates.mjs": "1c094305520f029bbbe971486660dbbda4e05c427df4728ae9602468b10d62d2",
+      "features.mjs": "625967087457a6f65041b021570d37e65a458a33a32762d5921f4a13bbef8e35",
+      "loopguard.mjs": "de77984ea4db39316f5a5cb1caa4c917b22b02e96bb29baac90b9075db87a7f9",
+      "mlp.mjs": "8eece94be118548f26eff8794ba314f3f6e48949a40898f104a906efd7556a94",
+      "policy.mjs": "71f97452045b77428ed368206eda4ba4d922823b8756817d2106cdcf6f7b470e"
+    },
+    "all": "52a2736ad7e3f43058a2467674f7fc6ebb61269e503db1efe042d739989e2e19",
+    "takenAt": "commit 0292aef"
+  },
+  "weights": {
+    "digest": "cebc14770f746ca2",
+    "featureVersion": 5,
+    "candidateFeatures": 120,
+    "stateFeatures": 62,
+    "network": {
+      "method": "mlp",
+      "hidden": 32
+    }
+  },
+  "learnedFor": {
+    "note": "The rules the data was played under. When the game's rules change (the first-turn draw, a card, a rule version), the data and this CPU are of the old rules: learn it again.",
+    "game": "f9d9e2bca14f75d84aa38b6c482b41d904e12d94",
+    "ruleVersion": "2.0-public-staging.20",
+    "cardVersion": "beta0.9.2-cards.16",
+    "firstTurnDraw": {
+      "first": 1,
+      "second": 2
+    }
+  },
+  "learnedFrom": {
+    "decisionsLearnedFrom": 54474,
+    "matches": 1499,
+    "teacher": "{\"a\":\"lookahead?persona=control\",\"b\":\"lookahead?persona=control\"}",
+    "validation": {
+      "n": 10583,
+      "top1": 0.7035812151563828,
+      "top3": 0.9240291032788435,
+      "nll": 0.7344047880823713
+    },
+    "method": {
+      "method": "mlp",
+      "hidden": 32,
+      "why": "all",
+      "advantage": "value",
+      "beta": 1,
+      "epochs": 25,
+      "lr": 0.01,
+      "l2": 0.0001,
+      "seed": 1
+    }
+  },
+  "evaluation": {
+    "note": "Strength = the share of matches won, both seat orders, every pair of the 10 decks (the 7 start decks and the 3 control decks ctl-kg / cthulhu / ctl-yo, each with its own user), game f9d9e2b (rule version 2.0-public-staging.20, cards beta0.9.2-cards.16), sim prior \"seen\" (what the seat has seen, never the other side's decklist); 95% range: Wilson. The lookahead it plays against is the one the CI evaluation of that run used (before SZbattlefield 42fbe3f); this record does not measure it again.",
+    "measuredAs": "the student of control round 1 (GitHub Actions run 42880820569, bundle-weights id 0a54395a...) as a file with no reader (the lightZIG form), in the CI evaluation of that run. Round 2 (run 43083366987) was weaker on the three control decks and is not used.",
+    "teacher": "lookahead with the control persona (cpus/personas/control.json); the student learned its answers, 1499 matches, 54474 decisions",
+    "mix": "ten decks, not the seven start decks of lightZIG / beatZIG: the three control decks are in every table",
+    "vsSimple": {
+      "matches": 2000,
+      "win": 0.657,
+      "range95": [
+        0.635,
+        0.677
+      ],
+      "wins": 1313,
+      "losses": 687,
+      "draws": 0,
+      "seeds": "1-10",
+      "opponent": "simple"
+    },
+    "vsLookahead": {
+      "matches": 1000,
+      "win": 0.467,
+      "range95": [
+        0.436,
+        0.498
+      ],
+      "wins": 467,
+      "losses": 533,
+      "draws": 0,
+      "seeds": "1-5",
+      "opponent": "lookahead"
+    },
+    "vsBeatZigGen2": {
+      "matches": 400,
+      "win": 0.505,
+      "range95": [
+        0.456,
+        0.554
+      ],
+      "wins": 202,
+      "losses": 198,
+      "draws": 0,
+      "seeds": "1-2",
+      "opponent": "cpus/release/gen2/beatZIG.mjs"
+    },
+    "byDeck": {
+      "note": "the win rate of the seat that plays the deck, against every one of the ten decks of the opponent (n = 200 per deck against simple, 100 against lookahead, 40 against beatZIG gen2). The target of the owner for ctl-kg, cthulhu and ctl-yo against simple: 50% or more; ctl-yo is over it, ctl-kg and cthulhu are not (they are lifted by changing the decks, not by this CPU).",
+      "vsSimple": {
+        "ctl-kg": {
+          "matches": 200,
+          "win": 0.37,
+          "range95": [
+            0.306,
+            0.439
+          ],
+          "wins": 74,
+          "losses": 126,
+          "draws": 0
+        },
+        "cthulhu": {
+          "matches": 200,
+          "win": 0.35,
+          "range95": [
+            0.287,
+            0.418
+          ],
+          "wins": 70,
+          "losses": 130,
+          "draws": 0
+        },
+        "ctl-yo": {
+          "matches": 200,
+          "win": 0.825,
+          "range95": [
+            0.766,
+            0.871
+          ],
+          "wins": 165,
+          "losses": 35,
+          "draws": 0
+        },
+        "threeDecks": {
+          "matches": 600,
+          "win": 0.515,
+          "range95": [
+            0.475,
+            0.555
+          ],
+          "wins": 309,
+          "losses": 291,
+          "draws": 0
+        },
+        "sevenStartDecks": {
+          "matches": 1400,
+          "win": 0.717,
+          "range95": [
+            0.693,
+            0.74
+          ],
+          "wins": 1004,
+          "losses": 396,
+          "draws": 0
+        }
+      },
+      "vsLookahead": {
+        "ctl-kg": {
+          "matches": 100,
+          "win": 0.15,
+          "range95": [
+            0.093,
+            0.233
+          ],
+          "wins": 15,
+          "losses": 85,
+          "draws": 0
+        },
+        "cthulhu": {
+          "matches": 100,
+          "win": 0.16,
+          "range95": [
+            0.101,
+            0.244
+          ],
+          "wins": 16,
+          "losses": 84,
+          "draws": 0
+        },
+        "ctl-yo": {
+          "matches": 100,
+          "win": 0.68,
+          "range95": [
+            0.583,
+            0.763
+          ],
+          "wins": 68,
+          "losses": 32,
+          "draws": 0
+        },
+        "threeDecks": {
+          "matches": 300,
+          "win": 0.33,
+          "range95": [
+            0.279,
+            0.385
+          ],
+          "wins": 99,
+          "losses": 201,
+          "draws": 0
+        },
+        "sevenStartDecks": {
+          "matches": 700,
+          "win": 0.526,
+          "range95": [
+            0.489,
+            0.562
+          ],
+          "wins": 368,
+          "losses": 332,
+          "draws": 0
+        }
+      },
+      "vsBeatZigGen2": {
+        "ctl-kg": {
+          "matches": 40,
+          "win": 0.25,
+          "range95": [
+            0.142,
+            0.402
+          ],
+          "wins": 10,
+          "losses": 30,
+          "draws": 0
+        },
+        "cthulhu": {
+          "matches": 40,
+          "win": 0.125,
+          "range95": [
+            0.055,
+            0.261
+          ],
+          "wins": 5,
+          "losses": 35,
+          "draws": 0
+        },
+        "ctl-yo": {
+          "matches": 40,
+          "win": 0.725,
+          "range95": [
+            0.572,
+            0.839
+          ],
+          "wins": 29,
+          "losses": 11,
+          "draws": 0
+        },
+        "threeDecks": {
+          "matches": 120,
+          "win": 0.367,
+          "range95": [
+            0.286,
+            0.456
+          ],
+          "wins": 44,
+          "losses": 76,
+          "draws": 0
+        },
+        "sevenStartDecks": {
+          "matches": 280,
+          "win": 0.564,
+          "range95": [
+            0.506,
+            0.621
+          ],
+          "wins": 158,
+          "losses": 122,
+          "draws": 0
+        }
+      }
+    },
+    "anomalies": {
+      "matches": 3400,
+      "count": 0,
+      "note": "refused window answers, stopped or capped matches, exceptions: none in the three evaluation tables (2000 + 1000 + 400).",
+      "records": "In the same run's teacher records (not an evaluation) one match was stuck (AI_NO_LEGAL_ACTION, a turn-end delayed destruction that leaves a trigger-order question pending and turn start overwrites it): a hole of the game engine, with the same cause for any CPU. The round 2 run found two more engine holes of the same kind (a window of STD-179 offered with no room: one refused answer in 2000 matches; the stuck of the same turn-end cause in the round-1 student's record, seed 205). They are in the fix queue of the game, not of this CPU."
+    },
+    "style": {
+      "note": "How the CPU played, counted from the real matches (src/style-report.mjs), against simple, 98+ matches of the persona note; the student of round 1 over its 3400 evaluation matches.",
+      "controlBand": {
+        "registry": 2.9,
+        "attackOnObPercent": 18,
+        "tradesPerMatch": 0.5,
+        "killsPerMatch": 0.9,
+        "memoryLeft": 0.87,
+        "source": "cpus/personas/control.json (note), vs simple"
+      },
+      "student": {
+        "attackOnObPercent": 21,
+        "tradesPerMatch": 0.55,
+        "killsPerMatch": 1.05,
+        "registry": 3.19,
+        "handAtTurnEnd": 2,
+        "memoryLeft": 1.02,
+        "matchLengthTurns": 10.1
+      },
+      "teacher": {
+        "attackOnObPercent": 19.9,
+        "tradesPerMatch": 0.51,
+        "killsPerMatch": 1.02,
+        "registry": 3.27,
+        "handAtTurnEnd": 1.99,
+        "memoryLeft": 0.8,
+        "source": "the teacher in the round-1 records"
+      },
+      "simple": {
+        "attackOnObPercent": 14.7,
+        "tradesPerMatch": 0.15,
+        "killsPerMatch": 0.35,
+        "registry": 3.52,
+        "memoryLeft": 1.4
+      },
+      "verdict": "attack on Ob, trades and kills are on the control side of the band (more than beatdown, as the persona note asks); registry is above the band and the memory left is above the 0.87 target (1.02 for the student, 0.80 for the teacher)."
+    },
+    "checkAfterFreeze": "200 of 200 matches against simple (seed 2, both orders, the 10 decks) identical (same hash of every command and the final state) to the same CPU before it was frozen; 139 wins, 61 losses."
+  },
+  "timePerDecision": {
+    "note": "choose() of the CPU, no reader. The CPU against itself, 12 matches (the 7 start decks) and 9 matches (ctl-kg, cthulhu, ctl-yo), 2 passes each, one worker, a desktop (i5-9600K) at about 25% load; the sim prior is \"seen\". Milliseconds. The device the game runs on is not measured. Played on the game of the branch with the fixes of d8fb27d (the engine, not the CPU, differs from f9d9e2b). The game's own CPU path (src/cpu) does not have controlZIG yet, so there is no game-side column.",
+    "median": 3.5,
+    "p95": 5.7,
+    "p99": 7.6,
+    "max": 49,
+    "mean": 3.1,
+    "controlDecks": {
+      "median": 3.2,
+      "p95": 6,
+      "p99": 8,
+      "max": 24,
+      "mean": 2.9
+    }
+  },
+  "playsOnly": "what the seat can see (its own query); no sim, no hidden information of the other side.",
+  "frozenAt": "2026-11-12T01:50:41.676Z",
+  "status": {
+    "chosenBy": "owner, 2026-11-12 (\"A\")",
+    "note": "Candidate of the control line. Control round 2 (run 43083366987) was weaker on the three control decks and is not used. ctl-kg and cthulhu (37%, 35% against simple, target 50%) are to be lifted by changing the decks (T24), not by this CPU. Not offered in the game: that is the next version, decided by the owner."
+  }
+}
