@@ -2,15 +2,17 @@
 // Made from the seat's query alone (its observation and the candidates made from its legal actions): the opponent's hand and deck are counts there, so they are counts here.
 // Card names and rule texts are written in: the seat sees them, and a reader needs them to judge a move (the learned features do not use them; this is not a feature).
 //
-//   buildPrompt(query, candidates)  ->  { version, system, user, candidates: [{ n, label, sig }] }       n is 1-based, in the order of `candidates`
+//   buildPrompt(query, candidates, { context })  ->  { version, system, context, user, candidates: [{ n, label, sig }] }       n is 1-based, in the order of `candidates`; context: the rules and the public card pool (teachers/context.mjs), or null
 // The same query and candidates always give the same text. PROMPT_VERSION changes with the wording.
-export const PROMPT_VERSION = 1;
+// 2 (2026-11-12): the model is also given the rules and the public card pool (src/teachers/context.mjs); buildPrompt(query, candidates, { context }) returns it as `context`, to be sent as part of the system text.
+export const PROMPT_VERSION = 2;
 
 const SYSTEM = [
   'あなたはカードゲーム「Siege÷Zeke」を遊ぶユーザーの1人です。相手ユーザーのフォートレスのSTRを0にすると勝ちます。',
   'ターンの中では、メモリを使ってカード(Ob・Code・Sp・Script)を実行・設置し、フロントのObで攻撃し、終えるときはターンを終了します。',
   'Obはスリープしていると攻撃できず、置いたターンは原則として攻撃できません。攻撃は相手ユーザーかスリープ中の相手Obに向けます。',
   '見えているのは、自分の手札・場・レジストリと、相手の場・枚数だけです。相手の手札や山札の中身は分かりません。',
+  'ルールブックと、公開されているカード全部の本文は、別に渡されます。相手が何をデッキに入れたかは、そこからも分かりません。',
   '与えられた番号つきの選択肢から、いまの局面で最もよい手を1つ選んでください。'
 ].join('\n');
 
@@ -56,7 +58,7 @@ function labelOf(candidate, index) {
   }
 }
 
-export function buildPrompt(query, candidates) {
+export function buildPrompt(query, candidates, { context = null } = {}) {
   const o = query.observation;
   const me = o.seats.find((s) => s.seatId === o.viewerSeat); const opp = o.seats.find((s) => s.seatId !== o.viewerSeat);
   const index = nameIndex(o);
@@ -78,5 +80,5 @@ export function buildPrompt(query, candidates) {
   const labelled = candidates.map((c, i) => ({ n: i + 1, label: labelOf(c, index), sig: c.sig }));
   lines.push('', '選択肢:'); for (const c of labelled) lines.push(`${c.n}. ${c.label}`);
   lines.push('', FORMAT);
-  return { version: PROMPT_VERSION, system: SYSTEM, user: lines.join('\n'), candidates: labelled };
+  return { version: PROMPT_VERSION, system: SYSTEM, context, user: lines.join('\n'), candidates: labelled };
 }

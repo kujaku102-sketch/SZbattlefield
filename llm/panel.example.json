@@ -7,6 +7,6 @@
   "retries": 4,
   "models": {
     "haiku": { "provider": "anthropic", "model": "claude-haiku-5-5", "maxTokens": 1500, "effort": "low", "expectedOutputTokens": 300,
-      "pricing": { "label": "Anthropic primary prices (checked 2026-11-08)", "rows": [ { "from": "2026-11-08", "input": 0.10, "output": 0.50 } ] } }
+      "pricing": { "label": "Anthropic primary prices (input and output checked 2026-11-08; cacheRead and cacheWrite are 0.1x and 1.25x of the input price, NOT checked: check them before a run, the rules and the card pool are sent with every call)", "rows": [ { "from": "2026-11-08", "input": 0.10, "output": 0.50, "cacheRead": 0.01, "cacheWrite": 0.125 } ] } }
   },
   "stages": [ { "ask": ["haiku"] } ] }

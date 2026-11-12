@@ -10,6 +10,7 @@ import { loadCpu } from '../cpus/index.mjs';
 import { appendOreBlock, matchLine, recordDecision, textHeader } from './ore.mjs';
 import { actionSignature } from '../cpus/learned/candidates.mjs';
 import { judgeMoves } from './judge.mjs';
+import { buildContext } from './teachers/context.mjs';
 
 const SEATS = ['seat-a', 'seat-b'];
 const OPENING = new Set(['keepOpeningHand', 'openingMulligan']);
@@ -48,6 +49,17 @@ async function loadGame(gameDir) {
 }
 
 let simHost = null;
+// the context of a language model for one seat of one match: the rules and the public pool of the game, and the seat's own decklist (counted once, at its first decision, from the cards of its own side)
+const ownDecks = new Map();
+async function llmContext(gameDir, state, playerId, key) {
+  if (!ownDecks.has(key)) {
+    const deck = {};
+    const owner = state.players[playerId];
+    for (const zone of ['deck', 'hand', 'registry', 'front', 'back', 'trash']) for (const card of owner[zone] ?? []) if (!card.token) deck[card.id] = (deck[card.id] ?? 0) + 1;
+    ownDecks.set(key, deck);
+  }
+  return buildContext({ gameDir, ownDeck: ownDecks.get(key) });
+}
 async function simHostFor(gameDir) { if (simHost?.dir !== gameDir) simHost = { dir: gameDir, host: await loadSimHost(gameDir) }; return simHost.host; }
 
 export async function startDeckIds(gameDir) { return (await loadGame(gameDir)).decks.START_DECKS.map((deck) => deck.id); }
@@ -174,7 +186,9 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           if (!skipTeacher) {
           const teacher = shadow.create();
           const hint = isLlm && compare?.intent?.ok ? { action: compare.intent.value.action, type: compare.intent.value.action.type, why: compare.cpu.lastDecision?.why ?? null } : null;
-          const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: isLlm ? undefined : simView, baseline: base, hint });
+          // a language model is given the rules and the public card pool, and the seat's own decklist (which the seat knows); never the other side's (src/teachers/context.mjs)
+          const context = isLlm ? await llmContext(gameDir, authority.engineState, SEATS.indexOf(actor) === 0 ? 'player' : 'ai', `${job.id}|${actor}`) : undefined;
+          const teacherIntent = await teacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: isLlm ? undefined : simView, baseline: base, hint, context });
           const kind = teacher.lastDecision?.kind;
           const usable = teacherIntent?.ok && !(kind === 'baseline' && !['no-gain', 'no-supported-move'].includes(teacher.lastDecision.why));
           // the model and the looking-ahead teacher chose different moves: which is worth more, by playing both out (src/judge.mjs)

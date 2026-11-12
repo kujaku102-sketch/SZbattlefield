@@ -32,6 +32,13 @@ import { maxCostOf, openLedger, priceOf } from './ledger.mjs';
 import { keyEnvOf, readApiKey, redact } from './secrets.mjs';
 import { actionSignature } from '../../cpus/learned/candidates.mjs';
 
+// the system text of an Anthropic request: the short system prompt, then the rules and the public card pool (and the seat's own list) when there are any; the blocks marked `cache` end a part the API keeps between calls
+const systemBlocks = (prompt) => (prompt.context?.blocks?.length
+  ? [{ type: 'text', text: prompt.system }, ...prompt.context.blocks.map((b) => ({ type: 'text', text: b.text, ...(b.cache ? { cache_control: { type: 'ephemeral' } } : {}) }))]
+  : prompt.system);
+// the characters of a prompt, the context too
+const charsOf = (prompt) => prompt.system.length + prompt.user.length + (prompt.context?.chars ?? 0);
+
 const hashOf = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 // the choice and the reason out of the text the model wrote: {"choice": n, "reason": "..."} (the first JSON object in the text)
@@ -68,12 +75,12 @@ const ENDPOINTS = {
 // each provider: how the request is made, how the reply is read -> { text, usage: { input_tokens, output_tokens }, stopReason }
 const PROVIDERS = {
   anthropic: {
-    request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': s.version }, body: { ...params, system: prompt.system, messages: [{ role: 'user', content: prompt.user }], ...(s.effort ? { output_config: { effort: s.effort } } : {}), ...(s.thinking ? { thinking: s.thinking } : {}) } }),
+    request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': s.version }, body: { ...params, system: systemBlocks(prompt), messages: [{ role: 'user', content: prompt.user }], ...(s.effort ? { output_config: { effort: s.effort } } : {}), ...(s.thinking ? { thinking: s.thinking } : {}) } }),
     read: (data) => ({ text: (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''), usage: data.usage ?? {}, stopReason: data.stop_reason ?? null })
   },
   gemini: {
     request: (s, params, prompt, apiKey) => ({ headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body: { systemInstruction: { parts: [{ text: prompt.system }] }, contents: [{ role: 'user', parts: [{ text: prompt.user }] }], generationConfig: { maxOutputTokens: params.max_tokens, temperature: params.temperature, responseMimeType: 'application/json', ...(s.thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget: s.thinkingBudget } } : {}) } } }),
+      body: { systemInstruction: { parts: [{ text: prompt.system }, ...(prompt.context?.blocks ?? []).map((b) => ({ text: b.text }))] }, contents: [{ role: 'user', parts: [{ text: prompt.user }] }], generationConfig: { maxOutputTokens: params.max_tokens, temperature: params.temperature, responseMimeType: 'application/json', ...(s.thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget: s.thinkingBudget } } : {}) } } }),
     read: (data) => ({ text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join(''), stopReason: data.candidates?.[0]?.finishReason ?? null,
       usage: { input_tokens: data.usageMetadata?.promptTokenCount ?? 0, output_tokens: (data.usageMetadata?.candidatesTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0) } })
   }
@@ -120,12 +127,12 @@ export function createLlmTeacher(settings, { env = process.env, fetchImpl = glob
 
   // request -> DecisionAnswer: { id, choice, reason, raw, model, params, usage, usd, latencyMs, cached, error }
   async function ask(request) {
-    const key = hashOf({ params, ...(s.effort || s.thinking ? { extra: { effort: s.effort, thinking: s.thinking } } : {}), system: request.prompt.system, user: request.prompt.user });
+    const key = hashOf({ params, ...(s.effort || s.thinking ? { extra: { effort: s.effort, thinking: s.thinking } } : {}), system: request.prompt.system, ...(request.prompt.context ? { context: request.prompt.context.sha256 } : {}), user: request.prompt.user });
     const file = cacheFile(key);
-    stats.decisions += 1; stats.promptChars += request.prompt.system.length + request.prompt.user.length;
+    stats.decisions += 1; stats.promptChars += charsOf(request.prompt);
     const price = priceNow();
-    const estimate = maxCostOf(request.prompt.system.length + request.prompt.user.length, s.maxTokens, price, 1.5);
-    stats.estimatedInputTokens += Math.ceil((request.prompt.system.length + request.prompt.user.length) / 2); stats.maxUsd += estimate;
+    const estimate = maxCostOf(charsOf(request.prompt), s.maxTokens, price, 1.5);
+    stats.estimatedInputTokens += Math.ceil(charsOf(request.prompt) / 2); stats.maxUsd += estimate;
     const base = { id: request.id, model: s.model, params, promptHash: key };
     if (file && existsSync(file)) {
       stats.cached += 1; const saved = JSON.parse(readFileSync(file, 'utf8'));
@@ -176,8 +183,8 @@ export function chooser(askDecision, srcOf = () => 'llm') {
         if (view.query.legalActions.some((e) => e.kind === 'fixed' && ['keepOpeningHand', 'openingMulligan'].includes(e.action?.type)) || view.query.legalActions.some((e) => e.actionType === 'openingMulligan')) { this.lastDecision = { kind: 'baseline', why: 'opening' }; return view.baseline(); }
         const built = buildCandidates(view.query, view.queryAction);
         if (built.cands.length < 2) { this.lastDecision = { kind: 'baseline', why: 'no-choice' }; return view.baseline(); }
-        const prompt = buildPrompt(view.query, built.cands);
-        const request = { id: `${view.seatId}|${view.query.status.revision}`, prompt: { system: prompt.system, user: prompt.user }, candidates: prompt.candidates, meta: { promptVersion: PROMPT_VERSION } };
+        const prompt = buildPrompt(view.query, built.cands, { context: view.context ?? null });
+        const request = { id: `${view.seatId}|${view.query.status.revision}`, prompt: { system: prompt.system, context: prompt.context, user: prompt.user }, candidates: prompt.candidates, meta: { promptVersion: PROMPT_VERSION } };
         const hint = view.hint ? { ...view.hint, n: view.hint.action ? built.cands.findIndex((c) => c.sig === actionSignature(view.hint.action)) + 1 || null : null } : null;
         const answer = await askDecision(request, hint);
         this.llm = { request, answer, built };
