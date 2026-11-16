@@ -3,6 +3,7 @@
 //
 //   decision.me          'player' | 'ai': the seat's side in the engine states below
 //   decision.moves       the seat's moves: [{ id, type, uids, zone, targetKind }]  (src/moves.mjs; the real engine calls and actions stay on this side)
+//                        which moves there are, and whether the windows a move opens are answered before a state is handed out, depends on `reads` (below)
 //   decision.unsupported the types of candidates that have no engine call yet (so nothing is silently dropped)
 //   decision.samples     how many determinized states there are
 //   decision.now(k)      determinized state k: what the seat cannot see is re-drawn (src/sim.mjs); read it, do not keep it
@@ -12,12 +13,16 @@
 //   decision.intent(id)  the runtime intent for move `id`, to be returned from choose()
 //   decision.elapsedMs() time since the decision was opened
 //
+// open({ authority, seat, reads }): `reads` is 'basic' (the default: the moves and the states every table made before 2026-11-17 was played with) or 'full', or
+// { mode: 'basic' | 'full', weights, budget }: full also reads a Sp, a card executed from the registry, a card effect, mounting and the other redeploys as moves (src/moves.mjs),
+// and answers the windows a move leaves open before it hands the state out (src/sim-windows.mjs, with the evaluation weights the CPU gave, and at most `budget` tries).
 // Nothing here gives a CPU the real engine state, the authority, the opponent's hidden cards or the means to reach them.
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { loadSim } from './sim.mjs';
 import { loadCandidates } from './candidates.mjs';
 import { loadMoves } from './moves.mjs';
+import { loadWindows } from './sim-windows.mjs';
 
 const now = () => process.hrtime.bigint();
 const msSince = (t) => Number(now() - t) / 1e6;
@@ -28,12 +33,17 @@ export async function loadSimHost(gameDir) {
   const sim = await loadSim(gameDir);
   const cand = await loadCandidates(gameDir);
   const mv = await loadMoves(gameDir);
+  const windows = await loadWindows(gameDir);
   const planning = await import(pathToFileURL(path.join(gameDir, 'src/game/runtime/planning-context.js')).href);
   const { G } = sim;
 
   // authority: the real match (never handed out); seat: the deciding seat; samples: how many determinized states to offer
-  function open({ authority, seat, samples = 4 }) {
+  function open({ authority, seat, samples = 4, reads = 'basic' }) {
     const started = now();
+    const readMode = typeof reads === 'string' ? reads : (reads?.mode ?? 'basic');
+    const full = readMode === 'full';
+    // the state a move leads to, with the windows it opened answered (full reads only)
+    const settled = (state) => (full ? windows.settle(state, { me, weights: reads?.weights, clone: sim.shareClone, budget: reads?.budget }) : state);
     const engine = authority.engineState;
     const metadata = authority.metadata;
     const seatIds = metadata.seatIds;
@@ -48,13 +58,12 @@ export async function loadSimHost(gameDir) {
     const planned = sim.shareClone(sample(0));
     const context = cand.engineContext(planned, metadata, seat);
     const catalog = context.allowed ? cand.catalog(planned, metadata, seat) : [];
-    const expanded = mv.expand(context, catalog);
+    const expanded = mv.expand(context, catalog, { reads: readMode });
     // Moves that differ only in which free slot of a zone they take are the same move for a CPU that looks one move ahead: one of each is kept.
     const seen = new Set();
     const moves = expanded.moves.filter((move) => {
-      const key = [move.type, [...move.uids].sort().join(','), move.action.destination?.zone ?? '', move.action.target?.kind ?? ''].join('|');
-      if (seen.has(key)) return false;
-      seen.add(key);
+      if (seen.has(move.key)) return false;
+      seen.add(move.key);
       return true;
     }).map((move, id) => ({ ...move, id }));
     const unsupported = expanded.unsupported;
@@ -83,7 +92,7 @@ export async function loadSimHost(gameDir) {
         if (!move) return null;
         const copy = sim.shareClone(sample(k));
         const result = G.actions.applyPreparedRuntimeAction(copy, move.adapter, { metadata, referenceState: authority.referenceState });
-        return result.ok && ['applied-complete', 'applied-awaiting-input'].includes(result.value.kind) ? copy : null;
+        return result.ok && ['applied-complete', 'applied-awaiting-input'].includes(result.value.kind) ? settled(copy) : null;
       },
       // the moves of one side on a state of this decision (a determinized one, or one reached from it by moves). Nothing is offered when it is not that side's turn or a choice is open.
       branch(state, who) {
@@ -93,12 +102,11 @@ export async function loadSimHost(gameDir) {
         const planned = sim.shareClone(state);
         const ctx = cand.engineContext(planned, metadata, seatFor);
         const entries = ctx.allowed ? cand.catalog(planned, metadata, seatFor) : [];
-        const expandedHere = mv.expand(ctx, entries);
+        const expandedHere = mv.expand(ctx, entries, { reads: readMode });
         const seenHere = new Set();
         const list = expandedHere.moves.filter((move) => {
-          const key = [move.type, [...move.uids].sort().join(','), move.action.destination?.zone ?? '', move.action.target?.kind ?? ''].join('|');
-          if (seenHere.has(key)) return false;
-          seenHere.add(key);
+          if (seenHere.has(move.key)) return false;
+          seenHere.add(move.key);
           return true;
         }).map((move, id) => ({ ...move, id }));
         return {
@@ -108,7 +116,7 @@ export async function loadSimHost(gameDir) {
             if (!move) return null;
             const copy = sim.shareClone(state);
             const result = G.actions.applyPreparedRuntimeAction(copy, move.adapter, { metadata, referenceState: authority.referenceState });
-            return result.ok && ['applied-complete', 'applied-awaiting-input'].includes(result.value.kind) ? copy : null;
+            return result.ok && ['applied-complete', 'applied-awaiting-input'].includes(result.value.kind) ? settled(copy) : null;
           }
         };
       },

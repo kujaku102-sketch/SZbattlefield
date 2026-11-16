@@ -11,6 +11,10 @@
 // This file may import only files of this folder (checked when it is loaded).
 //
 // Parameters (CPU spec `lookahead?k=2&margin=0.01&w_str=3...`): k = determinized states, margin = the smallest average gain worth a move,
+// reads = full (default) | basic: what the sim reads of the moves (src/sim-host.mjs `reads`): full also reads a Sp, a card effect, a card executed from the registry, mounting and the other redeploys, and
+// answers the windows a move leaves open before the move is valued (src/sim-windows.mjs, with this CPU's weights); basic = the moves and states of the tables made before 2026-11-17,
+// window_budget = how the sim answers the windows a move opens: 0 (default) = the way the game's own CPU answers them (which is who answers them in the match); N > 0 = the best answer, trying at most N copies
+// (reads the move as if the windows were answered well),
 // w_* = weights of the evaluation (cpus/lookahead/eval.mjs), guard=1 with budget=<ms> = hand the move to the current CPU when the thinking
 // runs over the time (off by default: a decision must not depend on how fast the machine is).
 import { evaluate, DEFAULT_WEIGHTS } from './lookahead/eval.mjs';
@@ -20,9 +24,20 @@ import { createLoopGuard } from './learned/loopguard.mjs';
 // What the seat sees, without the revision: if it is the same after a move, the move changed nothing.
 const looks = (query) => { const { revision, ...rest } = query.observation ?? {}; return JSON.stringify(rest); };
 
+// the weights of the evaluation the CPU values states with: the defaults, the persona's, and the w_* of the spec
+function weightsOf(params) {
+  // a CPU that reads the effects of cards (reads=full) values a card that is about to be destroyed by a delayed effect as nothing, unless the persona or the spec says otherwise
+  const weights = { ...DEFAULT_WEIGHTS, ...(params.reads === 'basic' ? {} : { doomedKeep: 0 }), ...(params.persona ? weightsFor(params.persona) : {}) };
+  for (const [key, value] of Object.entries(params)) if (key.startsWith('w_') && Number.isFinite(Number(value))) weights[key.slice(2)] = Number(value);
+  return weights;
+}
+// what the sim reads for this CPU (the harness hands it to the sim; nothing here depends on it)
+const simReadsOf = (params) => (params.reads === 'basic' ? 'basic' : { mode: 'full', weights: weightsOf(params), budget: Number(params.window_budget ?? 0) });
+
 export default {
   id: 'lookahead',
   needsSim: true,
+  simReadsOf,
   create(gameDir, params = {}) {
     const k = Math.max(1, Number(params.k ?? 2));
     // `guard`: 0 (default) = decisions depend only on the state and the parameters, so a match replays exactly; 1 = the time guard below is on:
@@ -30,8 +45,7 @@ export default {
     const guard = Number(params.guard ?? 0) === 1;
     const budget = Number(params.budget ?? 30);
     const margin = Number(params.margin ?? 0.01);
-    const weights = { ...DEFAULT_WEIGHTS, ...(params.persona ? weightsFor(params.persona) : {}) };
-    for (const [key, value] of Object.entries(params)) if (key.startsWith('w_') && Number.isFinite(Number(value))) weights[key.slice(2)] = Number(value);
+    const weights = weightsOf(params);
     let last = { revision: -1, id: -1 };
     let turn = null;                 // the turn the no-effect memory belongs to
     let pending = null;              // the move handed out at the last decision: { key, looks }
@@ -67,6 +81,7 @@ export default {
     };
     return {
       needsSim: true,
+      simReads: simReadsOf(params),
       counters,
       get lastDecision() { return lastDecision; },
       choose(view) {

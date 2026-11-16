@@ -12,7 +12,7 @@ import { describeGame } from './game-dir.mjs';
 import { deckHashes } from './decks.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const BENCH_FILES = ['play.mjs', 'worker.mjs', 'sim.mjs', 'sim-host.mjs', 'candidates.mjs', 'moves.mjs', '../cpus/index.mjs'];
+const BENCH_FILES = ['play.mjs', 'worker.mjs', 'sim.mjs', 'sim-host.mjs', 'candidates.mjs', 'moves.mjs', 'sim-windows.mjs', '../cpus/lookahead/eval.mjs', '../cpus/index.mjs'];
 
 export const benchHash = () => {
   const hash = createHash('sha256');

@@ -63,10 +63,10 @@ process.on('message', async (message) => {
   if (limits.shadow === 'llm') {
     llmTeacher ??= await makeLlmTeacher(limits, workers);
     const compareCpu = limits.compare ? await loadCpu(limits.compare) : null;
-    shadow = { kind: 'llm', create: () => llmTeacher.create(), compare: compareCpu ? { create: () => compareCpu.create(gameDir) } : null, teacher: llmTeacher, scope: llmTeacher.settings.scope ?? null, judge: llmTeacher.settings.judge ?? null, inScope };
+    shadow = { kind: 'llm', create: () => llmTeacher.create(), compare: compareCpu ? { create: () => compareCpu.create(gameDir) } : null, simReads: compareCpu?.simReadsOf?.(compareCpu.params) ?? 'basic', teacher: llmTeacher, scope: llmTeacher.settings.scope ?? null, judge: llmTeacher.settings.judge ?? null, inScope };
   } else if (limits.shadow) {
     const shadowCpu = await loadCpu(limits.shadow);
-    shadow = { create: () => shadowCpu.create(gameDir) };
+    shadow = { create: () => shadowCpu.create(gameDir), simReads: shadowCpu.simReadsOf?.(shadowCpu.params) ?? 'basic' };
   }
   const result = await playGame({ gameDir, job, cpus, limits, record: record ? { ...record, tag: String(process.pid) } : null, shadow });
   if (shadow?.teacher) result.llm = { ...shadow.teacher.stats, ledgerUsd: shadow.teacher.ledger?.usd ?? 0 };

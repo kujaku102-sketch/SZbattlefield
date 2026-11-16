@@ -150,7 +150,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
         // An adapter for the CPU as the game ships it (cpus/game-cpu.mjs) makes its own lookahead from the game's own code, so it is handed the match (needsAuthority); no other CPU is.
         if (cpus[actor].needsAuthority === true) view.authority = authority;
         if (cpus[actor].needsSim === true || cpus[actor].needsBaseline === true) view.baseline = () => baseline.choose({ query, queryAction, commandId, seatId: actor });
-        if (cpus[actor].needsSim === true && query.requiredInput === null) view.sim = host.open({ authority, seat: actor });
+        if (cpus[actor].needsSim === true && query.requiredInput === null) view.sim = host.open({ authority, seat: actor, reads: cpus[actor].simReads });
         intent = await cpus[actor].choose(view);   // a CPU may answer with a promise (a teacher that is asked over the network)
       }
       catch (error) {
@@ -169,7 +169,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
           const raw = ports[actor].queryAction;
           const isLlm = shadow.kind === 'llm';
           const needSim = !isLlm || Boolean(shadow.compare);
-          const simView = needSim ? host.open({ authority, seat: actor }) : null;
+          const simView = needSim ? host.open({ authority, seat: actor, reads: shadow.simReads }) : null;
           const base = () => baseline.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor });
           let compare = null;
           if (shadow.compare) {
@@ -205,7 +205,7 @@ export async function playGame({ gameDir, job, cpus, limits, record: oreOut = nu
             const saved = process.env.SZB_SIM_REFS;
             try {
               process.env.SZB_SIM_REFS = saved === 'keep' ? 'moved' : 'keep';
-              const otherSim = host.open({ authority, seat: actor });
+              const otherSim = host.open({ authority, seat: actor, reads: shadow.simReads });
               const otherTeacher = shadow.create();
               const otherIntent = await otherTeacher.choose({ query, queryAction: raw, commandId: `${commandId}s`, seatId: actor, sim: otherSim, baseline: base });
               if (otherIntent?.ok) {
