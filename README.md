@@ -53,12 +53,16 @@ CPU オブジェクトは試合ごと・席ごとに作り直す（試合をま�
 - `sim.after(id, k)`: その状態にその手を当てた結果の状態（なければ null）
 - `sim.intent(id, {commandId, expectedRevision})`: 返すべき intent
 - `view.baseline()`: 今の CPU（`simple`）がこの局面で選ぶ手
+- `reads`（`host.open` の引数。CPU が `simReads` で渡す）: `basic`（既定。置く・回収・スクリプト・ターボ・終了・攻撃・実行と再配置の空きスロット）か `full`（さらに Sp・レジストリ実行・カード効果・マウント・レジストリへ／Code の上への再配置を手にし、手が開いた窓に答えてから状態を渡す。`src/moves.mjs` `src/sim-windows.mjs`）。窓の答えは、既定ではゲームの CPU（simple）が答える通り（試合で窓に答えるのは simple なので、試合と同じ状態になる）。`lookahead?reads=basic` は 2026-11-17 より前の lookahead と同じ試合になる（`lookahead` の既定は full）。`lookahead?window_budget=N` は窓の答えを評価で選ぶ（N 回試す）。合体（executeLayered）と序盤の選びはまだ読まない。
 この CPU のファイルは、`cpus/` の中のファイルしか import できない（読み込むときに確かめる）。見本は `cpus/lookahead.mjs`。
 
 ## 時間の測り方（1手 = CPU が選んだコマンド1個）
 - `choose` = CPU の呼び出し全体 = `own`（CPU 自身のコード）+ `planning`（CPU が呼んだゲームの `queryAction`。ランタイムの時間）
 - `query` = 手の前にその席が取る query、`submit` = コマンドの提出。どちらもランタイム側の時間
 - 並列で回した表の時間は他の処理と競合する。時間は 1 ワーカー・単独で回した結果を使う。別々の機械の結果を合わせた表の時間は意味がない。
+
+## sim の手が本当の手と同じか（probe）
+`probe/moves-submit.mjs` は、実局面の上で sim の手（`reads=full`）をエンジンに当てた結果と、ランタイムに提出した結果が同じ盤面になるかを見る。`probe/windows-settle.mjs` は、手が開いた窓に答え切れるか・繰り返せるか・元の状態を触らないかを見る。どちらも `probe/positions.mjs` の局面（`--cache` に置いた試合を使い回す）。
 
 ## 1手を試す時間
 `probe/probe.mjs` は、今の CPU が打った試合から局面を拾い、ランタイム（検証・射影）を通さずにエンジンで 1 手を試す時間を測る。
