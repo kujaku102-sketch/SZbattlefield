@@ -13,7 +13,7 @@
 // Parameters (CPU spec `lookahead?k=2&margin=0.01&w_str=3...`): k = determinized states, margin = the smallest average gain worth a move,
 // reads = full (default) | basic: what the sim reads of the moves (src/sim-host.mjs `reads`): full also reads a Sp, a card effect, a card executed from the registry, mounting and the other redeploys, and
 // answers the windows a move leaves open before the move is valued (src/sim-windows.mjs, with this CPU's weights); basic = the moves and states of the tables made before 2026-11-17,
-// window_budget = how the sim answers the windows a move opens: 0 (default) = the way the game's own CPU answers them (which is who answers them in the match); N > 0 = the best answer, trying at most N copies
+// window_budget = how the sim answers the windows a move opens: 0 (default) = the way the game's own CPU answers them (the state the match reaches only when that CPU is who answers; an opponent that answers its own windows another way is not modeled); N > 0 = the best answer, trying at most N copies
 // (reads the move as if the windows were answered well),
 // w_* = weights of the evaluation (cpus/lookahead/eval.mjs), guard=1 with budget=<ms> = hand the move to the current CPU when the thinking
 // runs over the time (off by default: a decision must not depend on how fast the machine is).
@@ -46,6 +46,7 @@ export default {
     const budget = Number(params.budget ?? 30);
     const margin = Number(params.margin ?? 0.01);
     const weights = weightsOf(params);
+    const reads = params.reads === 'basic' ? 'basic' : 'full';   // what the sim read when a label was made: move ids and move types of the two reads are not the same list
     let last = { revision: -1, id: -1 };
     let turn = null;                 // the turn the no-effect memory belongs to
     let pending = null;              // the move handed out at the last decision: { key, looks }
@@ -53,7 +54,7 @@ export default {
     // how often each kind of decision was made (the harness writes these into the match result)
     const counters = { own: 0, baseline: 0, baselineWhy: {}, noEffectMoves: 0, endedTurnInstead: 0, windowsChanged: 0, loopUnavoidable: 0 };
     // what the last decision was, for a recorder that learns from this CPU (the harness reads it; nothing here depends on it):
-    // { kind: 'own' | 'baseline', why, moveId (own), gains: [{ id, value }] (the average gain of every move it tried, when it tried) }
+    // { kind: 'own' | 'baseline', why, moveId (own), gains: [{ id, value }] (the average gain of every move it tried, when it tried), reads: 'full' | 'basic' (a moveId only means something in a list read the same way) }
     let lastDecision = null;
     const loopGuard = createLoopGuard();   // what this CPU does not do: repeat a process that changes nothing, on the same board in one turn (cpus/learned/loopguard.mjs)
     let board = '';
@@ -61,7 +62,7 @@ export default {
     const hand = (key, query, result) => { pending = { key, looks: looks(query) }; return result; };
     const fallback = (view, why) => {
       counters.baseline += 1; counters.baselineWhy[why] = (counters.baselineWhy[why] ?? 0) + 1;
-      lastDecision = { kind: 'baseline', why, moveId: null, gains: gainsOut };
+      lastDecision = { kind: 'baseline', why, moveId: null, gains: gainsOut, reads };
       let result = view.baseline();
       if (result?.ok && view.query.requiredInput !== null) {
         result = loopGuard.answer(view.query, board, result);
@@ -122,7 +123,7 @@ export default {
         if (best === null || best.value <= margin) return fallback(view, 'no-gain');
         counters.own += 1;
         last = { revision, id: best.id };
-        lastDecision = { kind: 'own', why: 'own', moveId: best.id, gains: gainsOut };
+        lastDecision = { kind: 'own', why: 'own', moveId: best.id, gains: gainsOut, reads };
         return hand(`own:${best.move.type}:${[...best.move.uids].sort().join(',')}`, query,
           { ok: true, value: sim.intent(best.id, { commandId: view.commandId, expectedRevision: revision }) });
       }
