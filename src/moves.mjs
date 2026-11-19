@@ -161,7 +161,8 @@ export async function loadMoves(gameDir) {
             addFull('executeRegistry', { type: 'executeRegistry', cardRef: entry.base.cardRef, placement, targets, selectionScope },
               { engineFunction: 'executeRegistryCard', playerId, uid: entry.base.cardRef, options: withTargets },
               [entry.base.cardRef, ...(hostRef ? [hostRef] : []), ...targets.map((target) => uidOfTarget(context, target))],
-              `${placement.kind}:${placement.zone ?? ''}:${placement.slot ?? ''}:${selectionScope ?? ''}`);
+              // no slot here: free slots are one move to the host, which keeps one of each key (as executeCard does)
+              `${placement.kind}:${placement.zone ?? ''}:${selectionScope ?? ''}`);
           }
         }
       } else if (full && entry.actionType === 'activateCardEffect') {
