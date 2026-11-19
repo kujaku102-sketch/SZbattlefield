@@ -15,6 +15,7 @@
 //     after `budget` copies; what is left is answered by its first answer.
 //   - A selection of several cards (exact / up_to) tries the sets of the sizes minimum..maximum, in the order of the candidates, up to MAX_ANSWERS of them.
 //   - A window with no engine call here (an allocation, the security rest window) is left open, as before.
+//   - An answer the engine refuses is rolled back (when `clone` is given), so the next answer starts from the state the window was opened with.
 // It reads only the state it is given: nothing of the real match.
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -42,7 +43,18 @@ export async function loadWindows(gameDir) {
     for (const value of values) { const key = typeof value === 'string' && ids.has(value) ? `card:${ids.get(value)}` : `value:${JSON.stringify(value)}`; if (!seen.has(key)) { seen.add(key); out.push(value); } }
     return out;
   };
-  const safe = (fn) => { try { return fn() === true; } catch { return false; } };
+  const warned = new Set();
+  const safe = (fn) => {
+    try {
+      const result = fn();
+      // anything but true or false is not a known answer of the engine; it counts as refused, but say so once, else the window is left open without a trace
+      const kind = result === null ? 'null' : typeof result;
+      if (kind !== 'boolean' && !warned.has(kind)) { warned.add(kind); console.warn(`sim-windows: an engine call returned ${kind}, not true or false; the answer counts as refused`); }
+      return result === true;
+    } catch { return false; }
+  };
+  // put a state back as it was before a refused answer: the snapshot's contents into the same object
+  const restore = (state, snapshot) => { for (const key of Object.keys(state)) delete state[key]; Object.assign(state, snapshot); };
 
   const answerSelection = (state, selected, scope) => {
     const request = state.pending?.request;
@@ -139,9 +151,11 @@ export async function loadWindows(gameDir) {
       }
       if (best !== null) return best.state;
     }
-    // one answer, or no budget left: the first answer the engine takes
+    // one answer, or no budget left: the first answer the engine takes; a refused answer may have changed the state half way, so it is rolled back
     for (const answer of here.answers) {
+      const snapshot = context.clone?.(state);
       if (safe(() => answer.run(state))) return settle(state, context, depth + 1);
+      if (snapshot) restore(state, snapshot);
     }
     return state;
   }
