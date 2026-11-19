@@ -11,7 +11,7 @@
 //   budget > 0: every answer is tried on a copy, the windows that the answer opens in turn are answered the same way, and the answer whose final state is best for the one who owns the
 //     window is kept: the highest evaluation for `me`, the lowest for the other side (cpus/lookahead/eval.mjs with the weights the CPU gave; the same assumption playout() makes
 //     for moves). That reads what the move does when its windows are answered well, which no CPU of cpus/ does yet: a CPU that hands its windows to the game's CPU overrates such moves.
-//   - Equal cards are one answer (a card is told by its card id). More than MAX_ANSWERS answers of a window are cut to the first ones, and the whole settling stops trying
+//   - When a search is pruned, equal cards are one answer: same owner, same zone, same in everything but the uid, so damage, buffs, sleep or mounted cards keep cards apart. More than MAX_ANSWERS answers of a window are cut to the first ones, and the whole settling stops trying
 //     after `budget` copies; what is left is answered by its first answer.
 //   - A selection of several cards (exact / up_to) tries the sets of the sizes minimum..maximum, in the order of the candidates, up to MAX_ANSWERS of them.
 //   - A window with no engine call here (an allocation, the security rest window) is left open, as before.
@@ -30,11 +30,11 @@ export async function loadWindows(gameDir) {
   const model = await imp('src/game/selection-model.js');
   const drag = await imp('src/game/effects/generic/access-drag.js');
 
-  // card id of a uid anywhere in the state (a value that is not a card is its own identity)
+  // identity of a uid anywhere in the state: owner, zone and the whole card but its uid, so two copies that differ in state are not merged (a value that is not a card is its own identity)
   const cardIds = (state) => {
     const ids = new Map();
-    const walk = (card) => { ids.set(card.uid, card.id); for (const child of card.mounted ?? []) walk(child); };
-    for (const holder of ['player', 'ai']) for (const zone of ['deck', 'hand', 'front', 'back', 'registry', 'trash', 'ban']) for (const card of state.players[holder][zone]) walk(card);
+    const walk = (card, where) => { ids.set(card.uid, `${where}:${JSON.stringify(card, (name, value) => (name === 'uid' ? undefined : value))}`); for (const child of card.mounted ?? []) walk(child, where); };
+    for (const holder of ['player', 'ai']) for (const zone of ['deck', 'hand', 'front', 'back', 'registry', 'trash', 'ban']) for (const card of state.players[holder][zone]) walk(card, `${holder}/${zone}`);
     return ids;
   };
   const dedupe = (state, values) => {
