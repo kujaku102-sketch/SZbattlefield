@@ -67,7 +67,8 @@ export async function loadWindows(gameDir) {
   };
 
   // The window the state is waiting at, as { owner: 'player' | 'ai', answers: [{ run(state) -> boolean }] }, or null (nothing is open, or the window has no engine call here)
-  function windowOf(state) {
+  // prune = false keeps equal cards apart; settle passes it at budget 0, so the first answer is the first candidates as listed, as the game CPU takes them
+  function windowOf(state, prune = true) {
     const pending = state.pending ?? null;
     if (pending?.type === 'selection') {
       const request = pending.request;
@@ -76,8 +77,9 @@ export async function loadWindows(gameDir) {
       if (request.mode === 'scope') return { owner, answers: dedupe(state, request.scopeOptions ?? []).slice(0, MAX_ANSWERS).map((scope) => ({ run: (st) => answerSelection(st, [], scope) })) };
       if (request.mode === 'random') return { owner, answers: [{ run: (st) => answerSelection(st, [], null) }] };
       const maximum = Number(request.maximum ?? request.count ?? 1); const minimum = Number(request.minimum ?? 0);
-      // every candidate set of the right size; equal cards are told apart only when the window has groups (a group is a different slot for an equal card)
-      const candidates = request.groups?.length ? [...request.candidates] : dedupe(state, request.candidates);
+      // every candidate set of the right size; equal cards are merged only to prune a search (prune), never with groups (a group is a different slot for an equal card)
+      // without the merge, two copies of one card can both be taken, as the game CPU does
+      const candidates = (request.groups?.length || !prune) ? [...request.candidates] : dedupe(state, request.candidates);
       const sets = combos(candidates, minimum, maximum, MAX_ANSWERS);
       return { owner, answers: sets.map((selected) => ({ run: (st) => answerSelection(st, selected, null) })) };
     }
@@ -121,7 +123,7 @@ export async function loadWindows(gameDir) {
   // returns the settled state (`state` itself when nothing had to be tried)
   function settle(state, context, depth = 0) {
     if (!open(state)) return state;
-    const here = windowOf(state);
+    const here = windowOf(state, context.budget > 0);
     if (!here || here.answers.length === 0 || depth > MAX_DEPTH) return state;
     if (here.answers.length > 1 && context.budget > 0) {
       let best = null;
