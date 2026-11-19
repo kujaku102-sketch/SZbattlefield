@@ -63,10 +63,14 @@ process.on('message', async (message) => {
   if (limits.shadow === 'llm') {
     llmTeacher ??= await makeLlmTeacher(limits, workers);
     const compareCpu = limits.compare ? await loadCpu(limits.compare) : null;
-    shadow = { kind: 'llm', create: () => llmTeacher.create(), compare: compareCpu ? { create: () => compareCpu.create(gameDir) } : null, simReads: compareCpu?.simReadsOf?.(compareCpu.params) ?? 'basic', teacher: llmTeacher, scope: llmTeacher.settings.scope ?? null, judge: llmTeacher.settings.judge ?? null, inScope };
+    // the reads are the compare CPU's own, taken from an instance of it, not worked out again from its params; with no compare CPU the teacher gets 'basic' (the lookahead CPU's own default is full)
+    const compareReads = compareCpu ? (await compareCpu.create(gameDir)).simReads : null;
+    shadow = { kind: 'llm', create: () => llmTeacher.create(), compare: compareCpu ? { create: () => compareCpu.create(gameDir) } : null, simReads: compareReads ?? 'basic', teacher: llmTeacher, scope: llmTeacher.settings.scope ?? null, judge: llmTeacher.settings.judge ?? null, inScope };
   } else if (limits.shadow) {
     const shadowCpu = await loadCpu(limits.shadow);
-    shadow = { create: () => shadowCpu.create(gameDir), simReads: shadowCpu.simReadsOf?.(shadowCpu.params) ?? 'basic' };
+    // the reads come from an instance (the code the decisions run), so they cannot disagree with it; a CPU that sets none reads 'basic'
+    const shadowReads = (await shadowCpu.create(gameDir)).simReads;
+    shadow = { create: () => shadowCpu.create(gameDir), simReads: shadowReads ?? 'basic' };
   }
   const result = await playGame({ gameDir, job, cpus, limits, record: record ? { ...record, tag: String(process.pid) } : null, shadow });
   if (shadow?.teacher) result.llm = { ...shadow.teacher.stats, ledgerUsd: shadow.teacher.ledger?.usd ?? 0 };
