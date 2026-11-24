@@ -206,6 +206,8 @@ jobs:
       - name: Join the records and make the bundle
         env:
           ROUND: ${{ inputs.round }}
+          # the merge reads every shard into the node heap (about 8,000 matches ran past the default, about 3.9 GB: run 45358197143); the runner has 16 GB
+          NODE_OPTIONS: --max-old-space-size=12288
         run: |
           forge="node forgehammer/packages/forge/bin/forge.mjs"
           $forge ore merge parts/record-ll-*/ore-ll parts/record-ls-*/ore-ls --out bundle-ore
@@ -253,8 +255,8 @@ jobs:
         env:
           HAMMER: ${{ inputs.hammer_args }}
           ROUND: ${{ inputs.round }}
-          # the learner reads the records into the node heap (3,500 matches / 1.5 million candidates ran past its default, about 3.4 GB: run 42678798741); the runner has 16 GB
-          NODE_OPTIONS: --max-old-space-size=8192
+          # the learner reads the records into the node heap (3,500 matches / 1.5 million candidates ran past its default, about 3.4 GB: run 42678798741; about 8,000 matches scales to roughly 7.8 GB, past 8192); the runner has 16 GB
+          NODE_OPTIONS: --max-old-space-size=12288
         run: |
           forge="node forgehammer/packages/forge/bin/forge.mjs"
           $forge bundle verify in/ore
